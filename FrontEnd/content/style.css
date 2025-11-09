@@ -1,0 +1,7 @@
+#arrow-overlay {
+  z-index: 100;
+}
+
+.cg-board {
+  position: relative !important;
+}

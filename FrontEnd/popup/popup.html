@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CheckM Login</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="container">
+    <h2>CheckM8</h2>
+
+    <input type="text" id="username" placeholder="Username" required />
+    <input type="password" id="password" placeholder="Password" required />
+    <button id="loginBtn">Login</button>
+
+    <hr />
+
+    <div class="color-section">
+      <h4>Arrow Color </h4>
+      <input type="color" id="arrowColor" value="#00ff00" />
+      <button id="saveColorBtn">Save Color</button>
+    </div>
+
+    <p><a href="signup.html">Sign Up</a> | <a href="reset.html">Forgot Password?</a></p>
+    <p id="message"></p>
+  </div>
+
+  <script src="popup.js"></script>
+  <script src="colorpicker.js"></script>
+</body>
+</html>
