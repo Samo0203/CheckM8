@@ -1,4 +1,4 @@
-const backendUrl = "http://localhost:5000/api"; // replace with your backend URL
+const backendUrl = "http://localhost:5000/api";
 
 // Login
 document.getElementById("loginBtn").addEventListener("click", async () => {

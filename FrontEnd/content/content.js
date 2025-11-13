@@ -1,4 +1,4 @@
-console.log("✅ CheckM8 content script loaded");
+console.log("CheckM8 content script loaded");
 
 // Wait for board
 const observer = new MutationObserver(() => {

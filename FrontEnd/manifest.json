@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "CheckM8: Lichess Arrow Enhancer",
+  "name": "CheckM8",
   "version": "5.0",
   "description": "Numbered and colored arrows for Lichess with login, signup, OTP, and logout.",
   "icons": {
