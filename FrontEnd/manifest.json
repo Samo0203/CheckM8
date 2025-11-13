@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "CheckM8",
-  "version": "4.0",
-  "description": "Enhance Lichess arrows with colors and numbering, with real login/signup/OTP",
+  "version": "5.0",
+  "description": "Numbered and colored arrows for Lichess with login, signup, OTP, and logout.",
   "icons": {
     "16": "assets/icons/icon16.png",
     "48": "assets/icons/icon48.png",
@@ -25,7 +25,8 @@
     {
       "matches": ["https://lichess.org/*"],
       "js": ["content/content.js"],
-      "css": ["content/style.css"]
+      "css": ["content/style.css"],
+      "run_at": "document_idle"
     }
   ]
 }
