@@ -1,16 +1,13 @@
 const colorPicker = document.getElementById("arrowColor");
-const saveColorBtn = document.getElementById("saveColorBtn");
+const saveBtn = document.getElementById("saveColorBtn");
 
-chrome.storage.sync.get(["arrowColor"], (result) => {
-  if (result.arrowColor) {
-    colorPicker.value = result.arrowColor;
-  }
+chrome.storage.sync.get(["arrowColor"], (res) => {
+  if (res.arrowColor) colorPicker.value = res.arrowColor;
 });
 
-saveColorBtn.addEventListener("click", () => {
-  const color = colorPicker.value;
-  chrome.storage.sync.set({ arrowColor: color }, () => {
-    showMessage(`Arrow color set to ${color}`);
+saveBtn.addEventListener("click", () => {
+  chrome.storage.sync.set({ arrowColor: colorPicker.value }, () => {
+    showMessage(`Arrow color saved: ${colorPicker.value}`);
   });
 });
 
