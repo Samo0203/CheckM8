@@ -1,7 +1,20 @@
+<<<<<<< Updated upstream
 #arrow-overlay {
   z-index: 200 !important;
+=======
+.checkm8-arrows line {
+  opacity: 0.9;
+  transition: 0.2s;
+>>>>>>> Stashed changes
 }
 
-.cg-board {
-  position: relative !important;
+.checkm8-arrows text {
+  font-weight: bold;
+  paint-order: stroke;
+  stroke: black;
+  stroke-width: 0.05;
+}
+.checkm8-arrows line:hover {
+  opacity: 1;
+  stroke-width: 0.15;
 }
