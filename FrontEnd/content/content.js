@@ -1,8 +1,4 @@
-<<<<<<< Updated upstream
-console.log("CheckM8 content script loaded");
-=======
 console.log("✅ CheckM8 content script loaded");
->>>>>>> Stashed changes
 
 // Wait for board
 const observer = new MutationObserver(() => {
