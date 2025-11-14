@@ -1,4 +1,4 @@
-const backendUrl = "http://localhost:5000/api";
+const backendUrl = "http://localhost:5000/api"; // replace with your backend URL
 
 // Send OTP
 document.getElementById("sendOtpBtn").addEventListener("click", async () => {

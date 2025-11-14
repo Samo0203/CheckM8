@@ -1,11 +1,6 @@
-<<<<<<< Updated upstream
-#arrow-overlay {
-  z-index: 200 !important;
-=======
 .checkm8-arrows line {
   opacity: 0.9;
   transition: 0.2s;
->>>>>>> Stashed changes
 }
 
 .checkm8-arrows text {
