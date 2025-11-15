@@ -4,7 +4,7 @@ import { sendOTPEmail } from "../utils/mailer.js";
 import crypto from "crypto";
 
 const router = express.Router();
-const otpStore = new Map(); // temporary store, can move to DB
+const otpStore = new Map();
 
 // Send OTP
 router.post("/send-otp", async (req, res) => {

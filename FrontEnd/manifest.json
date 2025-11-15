@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Lichess Arrow Enhancer",
-  "version": "1.1.0",
+  "name": "Checkm8",
+  "version": "1.2.0",
   "description": "Customize, colorize, and number your arrows on Lichess — with user login & sync.",
   "icons": {
     "16": "assets/icons/icon16.png",

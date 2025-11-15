@@ -1,7 +1,7 @@
 // drawArrows.js
 const NS = 'http://www.w3.org/2000/svg';
 let svg, currentFrom, currentColorIndex = 0, arrowCount = 0;
-let numberingStyle = "number"; // number, roman, letter
+let numberingStyle = "number"; // "number", "roman", "letter"
 const colors = ['red', 'green', 'blue', 'yellow'];
 let arrowHistory = [];
 let legendVisible = false;
@@ -68,7 +68,7 @@ function createArrow(from, to, color, number) {
 
   const board = getBoard();
   const rect = board.getBoundingClientRect();
-  const lineWidth = 0.08; // reduced arrow width
+  const lineWidth = 0.08;
 
   const line = document.createElementNS(NS, 'line');
   line.setAttribute('x1', x1);
@@ -100,7 +100,7 @@ function createArrow(from, to, color, number) {
   svg.appendChild(text);
 
   arrowHistory.push({ line, text, color });
-  updateArrowHeadColor(color); // update arrowhead color dynamically
+  updateArrowHeadColor(color);
 }
 
 // Add arrowhead
@@ -109,14 +109,14 @@ function addArrowHead() {
   const marker = document.createElementNS(NS, 'marker');
   marker.setAttribute('id', 'arrowhead');
   marker.setAttribute('orient', 'auto');
-  marker.setAttribute('markerWidth', '3'); // reduced size
-  marker.setAttribute('markerHeight', '3'); // reduced size
+  marker.setAttribute('markerWidth', '3'); 
+  marker.setAttribute('markerHeight', '3');
   marker.setAttribute('refX', '2.05');
   marker.setAttribute('refY', '1.5');
 
   const path = document.createElementNS(NS, 'path');
   path.setAttribute('d', 'M0,0 V3 L3,1.5 Z');
-  path.setAttribute('fill', 'currentColor'); // dynamic fill
+  path.setAttribute('fill', 'currentColor');
   marker.appendChild(path);
   defs.appendChild(marker);
   svg.appendChild(defs);
