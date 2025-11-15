@@ -9,7 +9,12 @@
   stroke: black;
   stroke-width: 0.05;
 }
+
 .checkm8-arrows line:hover {
   opacity: 1;
-  stroke-width: 0.15;
+}
+
+#arrowLegend {
+  font-family: Arial, sans-serif;
+  display: none; /* Start hidden */
 }
