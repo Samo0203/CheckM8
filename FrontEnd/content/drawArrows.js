@@ -1,220 +1,211 @@
 // drawArrows.js
 const NS = 'http://www.w3.org/2000/svg';
-let svg, currentFrom, currentColorIndex = 0, arrowCount = 0;
-let numberingStyle = "number"; // "number", "roman", "letter"
-const colors = ['red', 'green', 'blue', 'yellow'];
-let arrowHistory = [];
-let legendVisible = false;
+let svg, currentFrom, arrowCount = 0;
+// Color definitions
+const COLOR_GREEN = 'green';
+const COLOR_CTRL = 'red';
+const COLOR_ALT = 'blue';
+const COLOR_SHIFT_ALT = 'orange';
+let drawnArrows = []; // Tracks all drawn arrows
 
-// Convert number to Roman numeral
-function toRoman(num) {
-  const roman = ["M","CM","D","CD","C","XC","L","XL","X","IX","V","IV","I"];
-  const val = [1000,900,500,400,100,90,50,40,10,9,5,4,1];
-  let res = "";
-  for (let i = 0; i < val.length; i++) {
-    while (num >= val[i]) {
-      res += roman[i];
-      num -= val[i];
-    }
-  }
-  return res;
-}
-
-// Convert number to letter sequence
-function toLetter(num) {
-  return String.fromCharCode(64 + num);
-}
-
+// Get chessboard
 function getBoard() {
-  return document.querySelector('cg-board') || document.querySelector('.cg-board');
+  return document.querySelector('cg-board') || document.querySelector('.cg-board');
 }
 
+// --- MODIFIED FUNCTION ---
+// Create SVG overlay if missing
 function ensureSvg() {
-  const board = getBoard();
-  if (!board) return null;
-  if (svg) return svg;
+  const board = getBoard();
+  if (!board) return null;
+  if (svg) return svg;
 
-  svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('viewBox', '-0.5 -0.5 8 8');
-  svg.style.position = 'absolute';
-  svg.style.top = '0';
-  svg.style.left = '0';
-  svg.style.width = '100%';
-  svg.style.height = '100%';
-  svg.style.pointerEvents = 'none';
-  svg.classList.add('checkm8-arrows');
-  board.appendChild(svg);
-  return svg;
+  // We will attach the SVG to the board's PARENT
+  const boardParent = board.parentElement;
+  if (!boardParent) return null; // Safety check
+
+  svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '-0.5 -0.5 8 8');
+  svg.style.position = 'absolute';
+  svg.style.top = '0';
+  svg.style.left = '0';
+  svg.style.width = '100%';
+  svg.style.height = '100%';
+  svg.style.pointerEvents = 'none';
+
+  // --- NEW LINES ---
+  // This is the fix:
+  // A high z-index makes the SVG layer sit on top of the pieces.
+  svg.style.zIndex = '10';
+  // --- END NEW LINES ---
+
+  svg.classList.add('checkm8-arrows');
+
+  // --- MODIFIED LINES ---
+  // Make the parent the positioning context
+  boardParent.style.position = 'relative';
+  // Append the SVG to the PARENT, not the board
+  boardParent.appendChild(svg);
+  // --- END MODIFIED ---
+  
+  return svg;
 }
+// --- END OF MODIFIED FUNCTION ---
 
+// Convert pixel to board coordinate
 function pixelToSquare(x, y, board) {
-  const rect = board.getBoundingClientRect();
-  const size = rect.width / 8;
-  const file = Math.floor((x - rect.left) / size);
-  const rank = 7 - Math.floor((y - rect.top) / size);
-  return String.fromCharCode(97 + file) + (rank + 1);
+  const rect = board.getBoundingClientRect();
+  const size = rect.width / 8;
+  const file = Math.floor((x - rect.left) / size);
+  const rank = 7 - Math.floor((y - rect.top) / size);
+  return String.fromCharCode(97 + file) + (rank + 1);
 }
 
+// Map algebraic key (e4) → 0–8 board coordinate
 function keyToXY(key) {
-  const file = key.charCodeAt(0) - 97;
-  const rank = parseInt(key[1]) - 1;
-  return { x: file, y: 7 - rank };
+  const file = key.charCodeAt(0) - 97;
+  const rank = parseInt(key[1]) - 1;
+  return { x: file, y: 7 - rank };
 }
 
-// Create arrow
-function createArrow(from, to, color, number) {
-  const { x: x1, y: y1 } = keyToXY(from);
-  const { x: x2, y: y2 } = keyToXY(to);
+// Create an SVG arrow with an attached number tag
+function createArrow(from, to, number, color) {
+  const { x: x1, y: y1 } = keyToXY(from);
+  const { x: x2, y: y2 } = keyToXY(to);
 
-  const board = getBoard();
-  const rect = board.getBoundingClientRect();
-  const lineWidth = 0.08;
+  // 1. The Arrow Line (is hidden)
+  
+  // 2. Calculate positions for the "tag"
+  const cx = (x1 + x2) / 2; // Arrow center X
+  const cy = (y1 + y2) / 2; // Arrow center Y
+  
+  const offset = 0.3; // How far the tag is from the arrow
+  const nx = cx + offset; // Tag X
+  const ny = cy + offset; // Tag Y
 
-  const line = document.createElementNS(NS, 'line');
-  line.setAttribute('x1', x1);
-  line.setAttribute('y1', y1);
-  line.setAttribute('x2', x2);
-  line.setAttribute('y2', y2);
-  line.setAttribute('stroke', color);
-  line.setAttribute('stroke-width', lineWidth);
-  line.setAttribute('marker-end', 'url(#arrowhead)');
-  line.style.transition = "0.2s";
+  // 3. The "Tag Line" (connects arrow to ring)
+  const tagLine = document.createElementNS(NS, 'line');
+  tagLine.setAttribute('x1', cx);
+  tagLine.setAttribute('y1', cy);
+  tagLine.setAttribute('x2', nx);
+  tagLine.setAttribute('y2', ny);
+  tagLine.setAttribute('stroke', 'white'); // Small white connector
+  tagLine.setAttribute('stroke-width', '0.05');
+  svg.appendChild(tagLine);
 
-  line.addEventListener('mouseenter', () => line.setAttribute('stroke-width', lineWidth * 2));
-  line.addEventListener('mouseleave', () => line.setAttribute('stroke-width', lineWidth));
+  // 4. The "Ring" (a circle)
+  const circle = document.createElementNS(NS, 'circle');
+  circle.setAttribute('cx', nx);
+  circle.setAttribute('cy', ny);
+  circle.setAttribute('r', '0.25'); // Radius of the ring
+  circle.setAttribute('fill', color); // Uses the passed-in color
+  circle.setAttribute('stroke', 'white'); // Small white border
+  circle.setAttribute('stroke-width', '0.03');
+  svg.appendChild(circle); // Add circle FIRST
 
-  svg.appendChild(line);
-
-  const text = document.createElementNS(NS, 'text');
-  text.setAttribute('x', (x1 + x2) / 2);
-  text.setAttribute('y', (y1 + y2) / 2);
-  text.setAttribute('fill', 'white');
-  text.setAttribute('font-size', '0.45');
-  text.setAttribute('text-anchor', 'middle');
-  text.setAttribute('dominant-baseline', 'middle');
-
-  if (numberingStyle === "roman") text.textContent = toRoman(number);
-  else if (numberingStyle === "letter") text.textContent = toLetter(number);
-  else text.textContent = number;
-
-  svg.appendChild(text);
-
-  arrowHistory.push({ line, text, color });
-  updateArrowHeadColor(color);
+  // 5. The Number (text)
+  const text = document.createElementNS(NS, 'text');
+  text.setAttribute('x', nx); // Position in center of circle
+  text.setAttribute('y', ny); // Position in center of circle
+  text.setAttribute('fill', 'white'); // White text
+  text.setAttribute('font-size', '0.3'); // Font to fit inside ring
+  text.setAttribute('text-anchor', 'middle');
+  text.setAttribute('dominant-baseline', 'middle');
+  text.textContent = number;
+  svg.appendChild(text); // Add text SECOND (on top)
+  
+  // Return all visible parts
+  return { tagLine, circle, text };
 }
 
-// Add arrowhead
-function addArrowHead() {
-  const defs = document.createElementNS(NS, 'defs');
-  const marker = document.createElementNS(NS, 'marker');
-  marker.setAttribute('id', 'arrowhead');
-  marker.setAttribute('orient', 'auto');
-  marker.setAttribute('markerWidth', '3'); 
-  marker.setAttribute('markerHeight', '3');
-  marker.setAttribute('refX', '2.05');
-  marker.setAttribute('refY', '1.5');
 
-  const path = document.createElementNS(NS, 'path');
-  path.setAttribute('d', 'M0,0 V3 L3,1.5 Z');
-  path.setAttribute('fill', 'currentColor');
-  marker.appendChild(path);
-  defs.appendChild(marker);
-  svg.appendChild(defs);
-}
-
-// Update arrowhead color dynamically
-function updateArrowHeadColor(color) {
-  const marker = svg.querySelector("#arrowhead path");
-  if (marker) marker.setAttribute("fill", color);
-}
-
-// Create on-screen legend
-function createLegend() {
-  let legend = document.getElementById("arrowLegend");
-  if (!legend) {
-    legend = document.createElement("div");
-    legend.id = "arrowLegend";
-    legend.style.position = "absolute";
-    legend.style.bottom = "10px";
-    legend.style.right = "10px";
-    legend.style.background = "rgba(0,0,0,0.5)";
-    legend.style.color = "white";
-    legend.style.padding = "8px";
-    legend.style.fontSize = "12px";
-    legend.style.borderRadius = "6px";
-    legend.style.zIndex = "500";
-    legend.style.display = "none";
-    document.body.appendChild(legend);
-  }
-
-  legend.innerHTML = `
-    <b>CheckM8</b><br>
-    Color: <span id="currentColor">${colors[currentColorIndex]}</span><br>
-    Shortcuts: C = Change Color, D = Undo, X = Clear, N = Change Numbering, G = Legend
-  `;
-  return legend;
+// Clears all arrows from the board and resets counters
+function clearAllArrows() {
+  svg.innerHTML = ''; // Clear SVG content
+  arrowCount = 0;
+  drawnArrows = [];  // Clear the tracking array
 }
 
 // Initialize
 function initDrawArrows() {
-  const board = getBoard();
-  if (!board) return;
-  ensureSvg();
-  addArrowHead();
-  const legend = createLegend();
+  const board = getBoard();
+  if (!board) return;
+  ensureSvg();
 
-  board.addEventListener('contextmenu', e => e.preventDefault());
+  board.addEventListener('contextmenu', e => e.preventDefault()); // Disables default right-click menu
 
-  board.addEventListener('mousedown', e => {
-    if (e.button !== 2) return;
-    currentFrom = pixelToSquare(e.clientX, e.clientY, board);
-  });
+  board.addEventListener('mousedown', e => {
+    // MODIFIED: Left-click (button 0) now clears arrows
+    if (e.button === 0) { 
+      clearAllArrows();
+      return;
+    }
+    
+    // MODIFIED: Only respond to right-click (button 2) for drawing
+    if (e.button !== 2) return; 
 
-  board.addEventListener('mouseup', e => {
-    if (e.button !== 2 || !currentFrom) return;
+    const square = pixelToSquare(e.clientX, e.clientY, board);
+    currentFrom = square;
+  });
+
+  board.addEventListener('mouseup', e => {
+    // MODIFIED: Only respond to right-click (button 2)
+    if (e.button !== 2 || !currentFrom) return;
+    
     const toSquare = pixelToSquare(e.clientX, e.clientY, board);
-    if (toSquare !== currentFrom) {
-      arrowCount++;
-      createArrow(currentFrom, toSquare, colors[currentColorIndex], arrowCount);
-    }
-    currentFrom = null;
-  });
+    
+    if (toSquare !== currentFrom) {
+      // Feature 2 - Toggle arrow on redraw
+      
+      // Check if this exact arrow already exists
+      const existingArrowIndex = drawnArrows.findIndex(
+        arrow => arrow.from === currentFrom && arrow.to === toSquare
+      );
 
-  window.addEventListener('keydown', e => {
-    const legendColor = document.getElementById("currentColor");
+      if (existingArrowIndex !== -1) {
+        // Arrow EXISTS: Remove it
+        const arrowToRemove = drawnArrows[existingArrowIndex];
+        arrowToRemove.tagLine.remove();
+        arrowToRemove.text.remove();
+        arrowToRemove.circle.remove();
+        drawnArrows.splice(existingArrowIndex, 1);
+      } else {
+        // Arrow does NOT exist: Create it
+        arrowCount++;
+        const numberToDisplay = Math.ceil(arrowCount / 2); // 1,1,2,2 logic
 
-    if (e.key.toLowerCase() === 'c') {
-      currentColorIndex = (currentColorIndex + 1) % colors.length;
-      if (legendColor) legendColor.textContent = colors[currentColorIndex];
-    }
+        // Determine color based on modifier keys
+        let arrowColor;
+        if (e.shiftKey && e.altKey) {
+          arrowColor = COLOR_SHIFT_ALT; // orange
+        } else if (e.altKey) {
+          arrowColor = COLOR_ALT; // blue
+        } else if (e.ctrlKey) {
+          arrowColor = COLOR_CTRL; // red
+        } else {
+          arrowColor = COLOR_GREEN; // green (default for right-click)
+        }
+        
+        const { tagLine, circle, text } = createArrow(
+          currentFrom, 
+          toSquare, 
+          numberToDisplay,
+          arrowColor // Pass the determined color
+        );
+        
+        // Store all parts
+        drawnArrows.push({ from: currentFrom, to: toSquare, tagLine, circle, text });
+      }
+    }
+    currentFrom = null;
+  });
 
-    if (e.key.toLowerCase() === 'd') {
-      const lastArrow = arrowHistory.pop();
-      if (lastArrow) {
-        lastArrow.line.remove();
-        lastArrow.text.remove();
-        arrowCount = Math.max(0, arrowCount - 1);
-      }
-    }
-
-    if (e.key.toLowerCase() === 'x') {
-      svg.innerHTML = '';
-      addArrowHead();
-      arrowCount = 0;
-      arrowHistory = [];
-    }
-
-    if (e.key.toLowerCase() === 'n') {
-      if (numberingStyle === "number") numberingStyle = "roman";
-      else if (numberingStyle === "roman") numberingStyle = "letter";
-      else numberingStyle = "number";
-    }
-
-    if (e.key.toLowerCase() === 'g') {
-      legendVisible = !legendVisible;
-      legend.style.display = legendVisible ? "block" : "none";
-    }
-  });
+  window.addEventListener('keydown', e => {
+    // 'x' key still clears all arrows
+    if (e.key.toLowerCase() === 'x') {
+      clearAllArrows();
+  _ }
+  });
 }
 
 setTimeout(initDrawArrows, 2000);
