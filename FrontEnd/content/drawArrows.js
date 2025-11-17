@@ -1,58 +1,47 @@
-// drawArrows.js
 const NS = 'http://www.w3.org/2000/svg';
-let svg, currentFrom, arrowCount = 0;
+let svg, currentFrom;
+let isWKeyPressed = false; 
+let highlightedNumberKey = null; 
+let renderedArrows = []; 
+
 // Color definitions
 const COLOR_GREEN = 'green';
 const COLOR_CTRL = 'red';
 const COLOR_ALT = 'blue';
 const COLOR_SHIFT_ALT = 'orange';
-let drawnArrows = []; // Tracks all drawn arrows
+const COLOR_PINK = 'deeppink'; 
 
-// Get chessboard
+let moveHistory = []; 
+
 function getBoard() {
   return document.querySelector('cg-board') || document.querySelector('.cg-board');
 }
 
-// --- MODIFIED FUNCTION ---
-// Create SVG overlay if missing
 function ensureSvg() {
-  const board = getBoard();
-  if (!board) return null;
-  if (svg) return svg;
+  const board = getBoard();
+  if (!board) return null;
+  if (svg) return svg;
 
-  // We will attach the SVG to the board's PARENT
   const boardParent = board.parentElement;
-  if (!boardParent) return null; // Safety check
+  if (!boardParent) return null;
 
-  svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('viewBox', '-0.5 -0.5 8 8');
-  svg.style.position = 'absolute';
-  svg.style.top = '0';
-  svg.style.left = '0';
-  svg.style.width = '100%';
-  svg.style.height = '100%';
-  svg.style.pointerEvents = 'none';
-
-  // --- NEW LINES ---
-  // This is the fix:
-  // A high z-index makes the SVG layer sit on top of the pieces.
-  svg.style.zIndex = '10';
-  // --- END NEW LINES ---
-
-  svg.classList.add('checkm8-arrows');
-
-  // --- MODIFIED LINES ---
-  // Make the parent the positioning context
-  boardParent.style.position = 'relative';
-  // Append the SVG to the PARENT, not the board
-  boardParent.appendChild(svg);
-  // --- END MODIFIED ---
+  svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '-0.5 -0.5 8 8');
+  svg.style.position = 'absolute';
+  svg.style.top = '0';
+  svg.style.left = '0';
+  svg.style.width = '100%';
+  svg.style.height = '100%';
+  svg.style.pointerEvents = 'none'; 
+  svg.style.zIndex = '10'; 
+  svg.classList.add('checkm8-arrows');
   
-  return svg;
+  boardParent.style.position = 'relative';
+  boardParent.appendChild(svg);
+  return svg;
 }
 // --- END OF MODIFIED FUNCTION ---
 
-// Convert pixel to board coordinate
 function pixelToSquare(x, y, board) {
   const rect = board.getBoundingClientRect();
   const size = rect.width / 8;
@@ -61,151 +50,290 @@ function pixelToSquare(x, y, board) {
   return String.fromCharCode(97 + file) + (rank + 1);
 }
 
-// Map algebraic key (e4) → 0–8 board coordinate
 function keyToXY(key) {
   const file = key.charCodeAt(0) - 97;
   const rank = parseInt(key[1]) - 1;
   return { x: file, y: 7 - rank };
 }
 
-// Create an SVG arrow with an attached number tag
+function addArrowHeadDefs() {
+  if (!svg) return;
+  const defs = document.createElementNS(NS, 'defs');
+  
+  const colors = [
+    { id: 'arrowhead-green', color: COLOR_GREEN },
+    { id: 'arrowhead-red', color: COLOR_CTRL },
+    { id: 'arrowhead-blue', color: COLOR_ALT },
+    { id: 'arrowhead-orange', color: COLOR_SHIFT_ALT },
+    { id: 'arrowhead-pink', color: COLOR_PINK },
+    { id: 'arrowhead-hidden', color: 'transparent' } 
+  ];
+
+  colors.forEach(item => {
+    const marker = document.createElementNS(NS, 'marker');
+    marker.setAttribute('id', item.id);
+    marker.setAttribute('orient', 'auto');
+    marker.setAttribute('markerWidth', '4');
+    marker.setAttribute('markerHeight', '4');
+    marker.setAttribute('refX', '2.05');
+    marker.setAttribute('refY', '2.01');
+
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', 'M0,0 V4 L3,2 Z');
+    path.setAttribute('fill', item.color);
+    marker.appendChild(path);
+    defs.appendChild(marker);
+  });
+  
+  svg.appendChild(defs);
+}
+
+function showArrow(arrowElements, color, markerUrl) {
+  const { line, g } = arrowElements;
+  svg.appendChild(line); 
+  svg.appendChild(g);    
+  line.setAttribute('stroke-opacity', '1.0');
+  line.setAttribute('stroke-width', '0.2');
+  line.setAttribute('stroke', color);
+  line.setAttribute('marker-end', markerUrl);
+}
+
+function hideArrow(arrowElements) {
+  const { line, color } = arrowElements;
+  
+  if (arrowElements.number.toString() !== highlightedNumberKey) {
+    line.setAttribute('stroke-opacity', '0');
+    line.setAttribute('stroke-width', '0.15');
+    line.setAttribute('stroke', color); 
+    line.setAttribute('marker-end', 'url(#arrowhead-hidden)');
+  }
+}
+
 function createArrow(from, to, number, color) {
-  const { x: x1, y: y1 } = keyToXY(from);
-  const { x: x2, y: y2 } = keyToXY(to);
-
-  // 1. The Arrow Line (is hidden)
+  const { x: x1, y: y1 } = keyToXY(from);
+  const { x: x2, y: y2 } = keyToXY(to);
+  const cx = (x1 + x2) / 2; 
+  const cy = (y1 + y2) / 2; 
   
-  // 2. Calculate positions for the "tag"
-  const cx = (x1 + x2) / 2; // Arrow center X
-  const cy = (y1 + y2) / 2; // Arrow center Y
-  
-  const offset = 0.3; // How far the tag is from the arrow
-  const nx = cx + offset; // Tag X
-  const ny = cy + offset; // Tag Y
+  const offset = 0.4; 
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  const perpendicularAngle = angle + Math.PI / 2; 
+  const nx = cx + offset * Math.cos(perpendicularAngle);
+  const ny = cy + offset * Math.sin(perpendicularAngle);
 
-  // 3. The "Tag Line" (connects arrow to ring)
+  let markerUrl;
+  if (color === COLOR_GREEN) markerUrl = 'url(#arrowhead-green)';
+  else if (color === COLOR_CTRL) markerUrl = 'url(#arrowhead-red)';
+  else if (color === COLOR_ALT) markerUrl = 'url(#arrowhead-blue)';
+  else if (color === COLOR_SHIFT_ALT) markerUrl = 'url(#arrowhead-orange)';
+  else markerUrl = 'url(#arrowhead-hidden)';
+
+  // The Arrow Line 
+  const line = document.createElementNS(NS, 'line');
+  line.setAttribute('x1', x1);
+  line.setAttribute('y1', y1);
+  line.setAttribute('x2', x2);
+  line.setAttribute('y2', y2);
+  line.setAttribute('stroke', color);
+  line.setAttribute('stroke-width', '0.15');
+  line.setAttribute('stroke-opacity', '0'); 
+  line.setAttribute('marker-end', 'url(#arrowhead-hidden)');
+  svg.appendChild(line);
+
+  // Create a <g> group for all tag elements
+  const g = document.createElementNS(NS, 'g');
+  g.style.pointerEvents = 'auto';
+  g.style.cursor = 'pointer';
+
+  // The "Tag Line"
   const tagLine = document.createElementNS(NS, 'line');
   tagLine.setAttribute('x1', cx);
   tagLine.setAttribute('y1', cy);
   tagLine.setAttribute('x2', nx);
   tagLine.setAttribute('y2', ny);
-  tagLine.setAttribute('stroke', 'white'); // Small white connector
+  tagLine.setAttribute('stroke', 'white');
   tagLine.setAttribute('stroke-width', '0.05');
-  svg.appendChild(tagLine);
+  g.appendChild(tagLine);
 
-  // 4. The "Ring" (a circle)
+  // The "Ring"
   const circle = document.createElementNS(NS, 'circle');
   circle.setAttribute('cx', nx);
   circle.setAttribute('cy', ny);
-  circle.setAttribute('r', '0.25'); // Radius of the ring
-  circle.setAttribute('fill', color); // Uses the passed-in color
-  circle.setAttribute('stroke', 'white'); // Small white border
+  circle.setAttribute('r', '0.25');
+  circle.setAttribute('fill', color);
+  circle.setAttribute('stroke', 'white');
   circle.setAttribute('stroke-width', '0.03');
-  svg.appendChild(circle); // Add circle FIRST
+  g.appendChild(circle);
 
-  // 5. The Number (text)
-  const text = document.createElementNS(NS, 'text');
-  text.setAttribute('x', nx); // Position in center of circle
-  text.setAttribute('y', ny); // Position in center of circle
-  text.setAttribute('fill', 'white'); // White text
-  text.setAttribute('font-size', '0.3'); // Font to fit inside ring
-  text.setAttribute('text-anchor', 'middle');
-  text.setAttribute('dominant-baseline', 'middle');
-  text.textContent = number;
-  svg.appendChild(text); // Add text SECOND (on top)
-  
-  // Return all visible parts
-  return { tagLine, circle, text };
+  // The Number
+  const text = document.createElementNS(NS, 'text');
+  text.setAttribute('x', nx);
+  text.setAttribute('y', ny);
+  text.setAttribute('fill', 'white');
+  text.setAttribute('font-size', '0.3');
+  text.setAttribute('text-anchor', 'middle');
+  text.setAttribute('dominant-baseline', 'middle');
+  text.textContent = number;
+  g.appendChild(text);
+
+  const arrowElements = { line, g, number, markerUrl, color };
+  
+  //Add Hover Listeners to the group
+  g.addEventListener('mouseenter', () => {
+    showArrow(arrowElements, color, markerUrl);
+  });
+  
+  g.addEventListener('mouseleave', () => {
+    if (highlightedNumberKey === number.toString()) {
+      showArrow(arrowElements, COLOR_PINK, 'url(#arrowhead-pink)');
+    } else {
+      hideArrow(arrowElements);
+    }
+  });
+  
+  // Add the finished group to the SVG and return elements
+  svg.appendChild(g);
+  return arrowElements;
 }
 
+function redrawAllArrows() {
+  if (!svg) return;
+  svg.innerHTML = ''; 
+  addArrowHeadDefs(); 
+  
+  renderedArrows = [];
+  let countedArrowIndex = 0;
+  let lastCountedNumber = 1;
 
-// Clears all arrows from the board and resets counters
-function clearAllArrows() {
-  svg.innerHTML = ''; // Clear SVG content
-  arrowCount = 0;
-  drawnArrows = [];  // Clear the tracking array
-}
+  moveHistory.forEach(move => {
+    let numberToDisplay;
 
-// Initialize
-function initDrawArrows() {
-  const board = getBoard();
-  if (!board) return;
-  ensureSvg();
-
-  board.addEventListener('contextmenu', e => e.preventDefault()); // Disables default right-click menu
-
-  board.addEventListener('mousedown', e => {
-    // MODIFIED: Left-click (button 0) now clears arrows
-    if (e.button === 0) { 
-      clearAllArrows();
-      return;
+    if (move.isCounted) {
+      countedArrowIndex++;
+      numberToDisplay = Math.ceil(countedArrowIndex / 2);
+      lastCountedNumber = numberToDisplay;
+    } else {
+      numberToDisplay = lastCountedNumber;
     }
     
-    // MODIFIED: Only respond to right-click (button 2) for drawing
-    if (e.button !== 2) return; 
+    const elements = createArrow(move.from, move.to, numberToDisplay, move.color);
+    renderedArrows.push(elements);
+  });
+}
 
-    const square = pixelToSquare(e.clientX, e.clientY, board);
-    currentFrom = square;
-  });
+function clearAllArrows() {
+  if (svg) {
+    svg.innerHTML = '';
+    addArrowHeadDefs();
+  }
+  moveHistory = [];
+  renderedArrows = [];
+}
 
-  board.addEventListener('mouseup', e => {
-    // MODIFIED: Only respond to right-click (button 2)
-    if (e.button !== 2 || !currentFrom) return;
-    
+function initDrawArrows() {
+  const board = getBoard();
+  if (!board) return;
+  ensureSvg();
+  addArrowHeadDefs(); 
+  board.addEventListener('contextmenu', e => e.preventDefault());
+
+  board.addEventListener('mousedown', e => {
+    if (e.button === 0) { 
+      clearAllArrows();
+      return;
+    }
+    
+    if (e.button !== 2) return; 
+
+    const square = pixelToSquare(e.clientX, e.clientY, board);
+    currentFrom = square;
+  });
+
+  board.addEventListener('mouseup', e => {
+    if (e.button !== 2 || !currentFrom) return;
+    
     const toSquare = pixelToSquare(e.clientX, e.clientY, board);
-    
-    if (toSquare !== currentFrom) {
-      // Feature 2 - Toggle arrow on redraw
-      
-      // Check if this exact arrow already exists
-      const existingArrowIndex = drawnArrows.findIndex(
-        arrow => arrow.from === currentFrom && arrow.to === toSquare
-      );
+    
+  if (toSquare !== currentFrom) {
+      const existingMoveIndex = moveHistory.findIndex(
+        move => move.from === currentFrom && move.to === toSquare
+      );
 
-      if (existingArrowIndex !== -1) {
-        // Arrow EXISTS: Remove it
-        const arrowToRemove = drawnArrows[existingArrowIndex];
-        arrowToRemove.tagLine.remove();
-        arrowToRemove.text.remove();
-        arrowToRemove.circle.remove();
-        drawnArrows.splice(existingArrowIndex, 1);
-      } else {
-        // Arrow does NOT exist: Create it
-        arrowCount++;
-        const numberToDisplay = Math.ceil(arrowCount / 2); // 1,1,2,2 logic
-
-        // Determine color based on modifier keys
+      if (existingMoveIndex !== -1) {
+        moveHistory.splice(existingMoveIndex, 1);
+      } else {
         let arrowColor;
+        let player; 
+        
         if (e.shiftKey && e.altKey) {
-          arrowColor = COLOR_SHIFT_ALT; // orange
+          arrowColor = COLOR_SHIFT_ALT;
+          player = 'black';
         } else if (e.altKey) {
-          arrowColor = COLOR_ALT; // blue
+          arrowColor = COLOR_ALT;
+          player = 'white';
         } else if (e.ctrlKey) {
-          arrowColor = COLOR_CTRL; // red
+          arrowColor = COLOR_CTRL;
+          player = 'white';
         } else {
-          arrowColor = COLOR_GREEN; // green (default for right-click)
+          arrowColor = COLOR_GREEN;
+          player = 'black';
         }
-        
-        const { tagLine, circle, text } = createArrow(
-          currentFrom, 
-          toSquare, 
-          numberToDisplay,
-          arrowColor // Pass the determined color
-        );
-        
-        // Store all parts
-        drawnArrows.push({ from: currentFrom, to: toSquare, tagLine, circle, text });
-      }
-    }
-    currentFrom = null;
-  });
+        
+        moveHistory.push({
+          from: currentFrom,
+          to: toSquare,
+          color: arrowColor,
+          player: player,
+          isCounted: !isWKeyPressed
+        });
+      }
 
-  window.addEventListener('keydown', e => {
-    // 'x' key still clears all arrows
-    if (e.key.toLowerCase() === 'x') {
-      clearAllArrows();
-  _ }
-  });
+      redrawAllArrows();
+    }
+    currentFrom = null;
+  });
+
+  window.addEventListener('keydown', e => {
+    if (e.repeat) return; 
+
+    const key = e.key;
+    if (key.toLowerCase() === 'w') {
+      isWKeyPressed = true;
+    }
+    if (key.toLowerCase() === 'x') {
+      clearAllArrows();
+    }
+    
+    const num = parseInt(key);
+    if (!isNaN(num) && num >= 0 && num <= 9) {
+      if (highlightedNumberKey && highlightedNumberKey !== key) {
+        renderedArrows
+          .filter(arrow => arrow.number.toString() === highlightedNumberKey)
+          .forEach(hideArrow);
+      }
+      
+      highlightedNumberKey = key;
+      renderedArrows
+        .filter(arrow => arrow.number.toString() === key)
+        .forEach(elements => {
+          showArrow(elements, COLOR_PINK, 'url(#arrowhead-pink)');
+        });
+    }
+  });
+
+  window.addEventListener('keyup', e => {
+    const key = e.key;
+    if (key.toLowerCase() === 'w') {
+      isWKeyPressed = false;
+    }
+
+    if (key === highlightedNumberKey) {
+      highlightedNumberKey = null; 
+      renderedArrows
+        .filter(arrow => arrow.number.toString() === key)
+        .forEach(hideArrow);
+    }
+  });
 }
 
 setTimeout(initDrawArrows, 2000);
