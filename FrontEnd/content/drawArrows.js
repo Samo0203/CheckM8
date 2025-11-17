@@ -14,7 +14,7 @@ const COLOR_PINK = 'deeppink';
 let moveHistory = []; 
 
 function getBoard() {
-  return document.querySelector('cg-board') || document.querySelector('.cg-board');
+  return document.querySelector('cg-board') || document.querySelector('.cg-board');
 }
 
 function ensureSvg() {
@@ -40,19 +40,20 @@ function ensureSvg() {
   boardParent.appendChild(svg);
   return svg;
 }
+// --- END OF MODIFIED FUNCTION ---
 
 function pixelToSquare(x, y, board) {
-  const rect = board.getBoundingClientRect();
-  const size = rect.width / 8;
-  const file = Math.floor((x - rect.left) / size);
-  const rank = 7 - Math.floor((y - rect.top) / size);
-  return String.fromCharCode(97 + file) + (rank + 1);
+  const rect = board.getBoundingClientRect();
+  const size = rect.width / 8;
+  const file = Math.floor((x - rect.left) / size);
+  const rank = 7 - Math.floor((y - rect.top) / size);
+  return String.fromCharCode(97 + file) + (rank + 1);
 }
 
 function keyToXY(key) {
-  const file = key.charCodeAt(0) - 97;
-  const rank = parseInt(key[1]) - 1;
-  return { x: file, y: 7 - rank };
+  const file = key.charCodeAt(0) - 97;
+  const rank = parseInt(key[1]) - 1;
+  return { x: file, y: 7 - rank };
 }
 
 function addArrowHeadDefs() {
