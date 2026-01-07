@@ -23,17 +23,17 @@ const COLOR_PINK = 'deeppink'; // 'h' key highlight color
 const COLOR_ROSE = 'hotpink'; // 'g' key (and hover) highlight color
 
 // --- STATE MANAGEMENT ---
-let historyLog = [ [] ]; // Array of "snapshots"
+let historyLog = [[]]; // Array of "snapshots"
 let currentHistoryIndex = 0; // Tracks our position in the log
 // --- END STATE MANAGEMENT ---
 
+const backendUrl = "http://localhost:5000/api"; // Backend URL
 
-// Get chessboard
+// ---------- BOARD & SVG ----------
 function getBoard() {
   return document.querySelector('cg-board') || document.querySelector('.cg-board');
 }
 
-// Create SVG overlay if missing (with z-index fix)
 function ensureSvg() {
   const board = getBoard();
   if (!board) return null;
@@ -49,10 +49,10 @@ function ensureSvg() {
   svg.style.left = '0';
   svg.style.width = '100%';
   svg.style.height = '100%';
-  svg.style.pointerEvents = 'none'; // Main SVG is invisible to mouse
-  svg.style.zIndex = '10'; // Makes sure SVG is on top of pieces
+  svg.style.pointerEvents = 'none';
+  svg.style.zIndex = '10';
   svg.classList.add('checkm8-arrows');
-  
+
   boardParent.style.position = 'relative';
   boardParent.appendChild(svg);
   return svg;
@@ -74,11 +74,33 @@ function keyToXY(key) {
   return { x: file, y: 7 - rank };
 }
 
-// Add Yellow Arrowhead
+// ---------- SAVE ARROW ----------
+function getLoggedInUser() {
+  return new Promise(resolve => {
+    if (chrome?.storage?.sync) {
+      chrome.storage.sync.get(["loggedInUser"], res => {
+        resolve(res?.loggedInUser || "testUser");
+      });
+    } else {
+      resolve("testUser");
+    }
+  });
+}
+
+function saveArrowToBackend(user, arrow) {
+  if (!arrow.from || !arrow.to) return;
+  fetch(`${backendUrl}/save-arrow`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user, ...arrow })
+  }).catch(() => {});
+}
+
+// ---------- DRAWING & HELPERS ----------
 function addArrowHeadDefs() {
   if (!svg) return;
   const defs = document.createElementNS(NS, 'defs');
-  
+
   const colors = [
     { id: 'arrowhead-green', color: COLOR_GREEN },
     { id: 'arrowhead-red', color: COLOR_CTRL },
@@ -101,60 +123,48 @@ function addArrowHeadDefs() {
 
     const path = document.createElementNS(NS, 'path');
     path.setAttribute('d', 'M0,0 V4 L3,2 Z');
-    path.setAttribute('fill', item.color); // Use the specific color
+    path.setAttribute('fill', item.color);
     marker.appendChild(path);
     defs.appendChild(marker);
   });
-  
+
   svg.appendChild(defs);
 }
 
-// --- EDITED HELPER FUNCTION ---
 function showArrow(arrowElements, color, markerUrl) {
-  const { line, g } = arrowElements; 
-  svg.appendChild(line); // Bring to front
-  svg.appendChild(g);     // Bring to front
+  const { line, g } = arrowElements;
+  svg.appendChild(line);
+  svg.appendChild(g);
   line.setAttribute('stroke-opacity', '1.0');
-
-  // --- NEW LOGIC: All arrows are normal size ---
-  line.setAttribute('stroke-width', '0.2'); 
-  // --- END NEW LOGIC ---
-  
+  line.setAttribute('stroke-width', '0.2');
   line.setAttribute('stroke', color);
   line.setAttribute('marker-end', markerUrl);
 }
 
 function hideArrow(arrowElements) {
   const { line, color } = arrowElements;
-  
   const isHKeyHighlighted = isHighlightActive && highlightBuffer === arrowElements.number.toString();
-  const isGKeyHighlighted = isVariationHighlightActive && variationHighlightBuffer && 
+  const isGKeyHighlighted = isVariationHighlightActive && variationHighlightBuffer &&
                             arrowElements.variationID === parseInt(variationHighlightBuffer);
   const isToggled = toggledHighlight.number === arrowElements.number.toString() &&
                     toggledHighlight.color === arrowElements.color;
 
-  if (!isHKeyHighlighted && !isGKeyHighlighted && !isToggled) { // Only hide if NOTHING is active
+  if (!isHKeyHighlighted && !isGKeyHighlighted && !isToggled) {
     line.setAttribute('stroke-opacity', '0');
     line.setAttribute('stroke-width', '0.15');
-    line.setAttribute('stroke', color); // Reset to original color
+    line.setAttribute('stroke', color);
     line.setAttribute('marker-end', 'url(#arrowhead-hidden)');
   }
 }
-// --- END HELPER FUNCTIONS ---
 
-
-// --- HELPER: clearSvg ---
 function clearSvg() {
   if (svg) {
     svg.innerHTML = '';
     addArrowHeadDefs();
   }
-  renderedArrows = []; // Clear the lookup array
+  renderedArrows = [];
 }
-// --- END NEW HELPER ---
 
-
-// --- NEW HELPER: clearToggledHighlight ---
 function clearToggledHighlight() {
   if (toggledHighlight.number) {
     renderedArrows
@@ -163,10 +173,7 @@ function clearToggledHighlight() {
     toggledHighlight = { number: null, color: null };
   }
 }
-// --- END NEW HELPER ---
 
-
-// --- NEW HELPER: clearHHighlight ---
 function clearHHighlight() {
   if (isHighlightActive) {
     isHighlightActive = false;
@@ -176,10 +183,7 @@ function clearHHighlight() {
     highlightBuffer = "";
   }
 }
-// --- END NEW HELPER ---
 
-
-// --- NEW HELPER: clearGHighlight ---
 function clearGHighlight() {
   if (isVariationHighlightActive) {
     isVariationHighlightActive = false;
@@ -192,32 +196,32 @@ function clearGHighlight() {
     variationHighlightBuffer = "";
   }
 }
-// --- END NEW HELPER ---
 
-
-// --- EDITED: recordNewAction ---
 function recordNewAction(newState) {
-  clearToggledHighlight(); // A new action clears any toggle
+  clearToggledHighlight();
   clearHHighlight();
   clearGHighlight();
-  
+
   historyLog = historyLog.slice(0, currentHistoryIndex + 1);
   historyLog.push(newState);
   currentHistoryIndex = historyLog.length - 1;
-  
-  // This call will draw all arrows as HIDDEN
-  redrawAllArrows(); 
+
+  redrawAllArrows();
+  showAllArrowsInCurrentState();
+
+  // --- SAVE ALL NEW ARROWS TO BACKEND ---
+  (async () => {
+    const user = await getLoggedInUser();
+    newState.forEach(arrow => saveArrowToBackend(user, arrow));
+  })();
 }
-// --- END EDITED ---
 
-
-// --- EDITED: showAllArrowsInCurrentState ---
 function showAllArrowsInCurrentState() {
-  clearToggledHighlight(); // Undo/Redo clears any toggle
-  
+  clearToggledHighlight();
+
   renderedArrows.forEach(elements => {
     const isHKeyHighlighted = isHighlightActive && highlightBuffer === elements.number.toString();
-    const isGKeyHighlighted = isVariationHighlightActive && variationHighlightBuffer && 
+    const isGKeyHighlighted = isVariationHighlightActive && variationHighlightBuffer &&
                               elements.variationID === parseInt(variationHighlightBuffer);
 
     if (isHKeyHighlighted) {
@@ -229,44 +233,40 @@ function showAllArrowsInCurrentState() {
     }
   });
 }
-// --- END EDITED ---
 
-
-// --- Undo/Redo Functions ---
+// --- Undo/Redo ---
 function undoMove() {
   currentHistoryIndex = Math.max(0, currentHistoryIndex - 1);
-  redrawAllArrows(); // Draws the state (hidden)
-  showAllArrowsInCurrentState(); // <-- Makes them visible
+  redrawAllArrows();
+  showAllArrowsInCurrentState();
 }
 
 function redoMove() {
   currentHistoryIndex = Math.min(historyLog.length - 1, currentHistoryIndex + 1);
-  redrawAllArrows(); // Draws the state (hidden)
-  showAllArrowsInCurrentState(); // <-- Makes them visible
+  redrawAllArrows();
+  showAllArrowsInCurrentState();
 }
-// --- END Undo/Redo Functions ---
 
-
-// --- EDITED: createArrow (Hover Logic) ---
+// --- CREATE ARROW ---
 function createArrow(from, to, number, color, isCounted, variationID) {
   const { x: x1, y: y1 } = keyToXY(from);
   const { x: x2, y: y2 } = keyToXY(to);
-  const cx = (x1 + x2) / 2; // Arrow center X
-  const cy = (y1 + y2) / 2; // Arrow center Y
-  
-  const offset = 0.4; // Tag line length
+  const cx = (x1 + x2) / 2;
+  const cy = (y1 + y2) / 2;
+
+  const offset = 0.4;
   const angle = Math.atan2(y2 - y1, x2 - x1);
   const perpendicularAngle = angle + Math.PI / 2; 
   const nx = cx + offset * Math.cos(perpendicularAngle);
   const ny = cy + offset * Math.sin(perpendicularAngle);
-  
+
   let markerUrl;
   if (color === COLOR_GREEN) markerUrl = 'url(#arrowhead-green)';
   else if (color === COLOR_CTRL) markerUrl = 'url(#arrowhead-red)';
   else if (color === COLOR_ALT) markerUrl = 'url(#arrowhead-blue)';
   else if (color === COLOR_SHIFT_ALT) markerUrl = 'url(#arrowhead-orange)';
   else if (color === COLOR_YELLOW) markerUrl = 'url(#arrowhead-yellow)';
-  else markerUrl = 'url(#arrowhead-hidden)'; // Default to hidden
+  else markerUrl = 'url(#arrowhead-hidden)';
 
   const line = document.createElementNS(NS, 'line');
   line.setAttribute('x1', x1);
@@ -274,16 +274,13 @@ function createArrow(from, to, number, color, isCounted, variationID) {
   line.setAttribute('x2', x2);
   line.setAttribute('y2', y2);
   line.setAttribute('stroke', color);
-  
-  // Make arrow HIDDEN by default
   line.setAttribute('stroke-width', '0.15');
-  line.setAttribute('stroke-opacity', '0'); 
-  line.setAttribute('marker-end', 'url(#arrowhead-hidden)'); 
-  
+  line.setAttribute('stroke-opacity', '0');
+  line.setAttribute('marker-end', 'url(#arrowhead-hidden)');
   svg.appendChild(line);
 
   const g = document.createElementNS(NS, 'g');
-  g.style.pointerEvents = 'auto'; // Make this group hoverable
+  g.style.pointerEvents = 'auto';
   g.style.cursor = 'pointer';
 
   const tagLine = document.createElementNS(NS, 'line');
@@ -311,305 +308,162 @@ function createArrow(from, to, number, color, isCounted, variationID) {
   text.setAttribute('font-size', '0.3');
   text.setAttribute('text-anchor', 'middle');
   text.setAttribute('dominant-baseline', 'middle');
-  text.textContent = number; 
+  text.textContent = number;
   g.appendChild(text);
 
   const arrowElements = { line, g, number, markerUrl, color, isCounted, variationID };
-  
-  // --- EDITED: mouseenter listener ---
+
   g.addEventListener('mouseenter', () => {
-    // Mouse hover always wins
-    if (!isCounted) {
-      // It's a variation. Show ROSE on hover.
-      showArrow(arrowElements, COLOR_ROSE, 'url(#arrowhead-rose)');
-    } else {
-      // It's a main line arrow. Show its original color.
-      showArrow(arrowElements, color, markerUrl);
-    }
+    if (!isCounted) showArrow(arrowElements, COLOR_ROSE, 'url(#arrowhead-rose)');
+    else showArrow(arrowElements, color, markerUrl);
   });
-  // --- END EDITED ---
-  
-  // --- EDITED: mouseleave (checks all states) ---
+
   g.addEventListener('mouseleave', () => {
     const isHKeyHighlighted = isHighlightActive && highlightBuffer === arrowElements.number.toString();
     const isGKeyHighlighted = isVariationHighlightActive && variationHighlightBuffer &&
                               arrowElements.variationID === parseInt(variationHighlightBuffer);
     const isToggled = toggledHighlight.number === arrowElements.number.toString() &&
                       toggledHighlight.color === arrowElements.color;
-    
-    if (isHKeyHighlighted) {
-      showArrow(arrowElements, COLOR_PINK, 'url(#arrowhead-pink)');
-    } else if (isGKeyHighlighted) {
-      showArrow(arrowElements, COLOR_ROSE, 'url(#arrowhead-rose)');
-    } else if (isToggled) {
-      showArrow(arrowElements, color, markerUrl);
-    } else {
-      hideArrow(arrowElements);
-    }
-  });
-  // --- END EDITED ---
-  
-  // --- Click listener to toggle highlight ---
-  g.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation(); 
 
-    const { number, color, markerUrl } = arrowElements;
+    if (isHKeyHighlighted) showArrow(arrowElements, COLOR_PINK, 'url(#arrowhead-pink)');
+    else if (isGKeyHighlighted) showArrow(arrowElements, COLOR_ROSE, 'url(#arrowhead-rose)');
+    else if (isToggled) showArrow(arrowElements, color, markerUrl);
+    else hideArrow(arrowElements);
+  });
+
+  g.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    const { number, color } = arrowElements;
     const isAlreadyToggled = toggledHighlight.number === number.toString() &&
                              toggledHighlight.color === color;
-    
+
     clearToggledHighlight();
     clearHHighlight();
     clearGHighlight();
 
-    if (isAlreadyToggled) {
-      // We just cleared it
-    } else {
-      // Not toggled, so set it
+    if (!isAlreadyToggled) {
       toggledHighlight = { number: number.toString(), color: color };
-      // And show all arrows in this sequence
       renderedArrows
         .filter(el => el.number.toString() === number.toString() && el.color === color)
         .forEach(el => showArrow(el, el.color, el.markerUrl));
     }
   });
-  
+
   svg.appendChild(g);
   return arrowElements;
 }
 
-
-// --- Pass all move info to createArrow ---
 function redrawAllArrows() {
-  clearSvg(); // Start by clearing the board
-  
+  clearSvg();
   const activeHistory = historyLog[currentHistoryIndex] || [];
-
   activeHistory.forEach(move => {
-    // Pass all info, including isCounted and variationID
     const elements = createArrow(move.from, move.to, move.number, move.color, move.isCounted, move.variationID);
-    renderedArrows.push(elements); // Add to our lookup array
+    renderedArrows.push(elements);
   });
 }
 
-
-// Initialize
+// --- INIT ---
 function initDrawArrows() {
   const board = getBoard();
   if (!board) return;
   ensureSvg();
-  addArrowHeadDefs(); // Add arrowhead definitions on init
+  addArrowHeadDefs();
 
   board.addEventListener('contextmenu', e => e.preventDefault());
 
-  // mousedown listener
   board.addEventListener('mousedown', e => {
-    if (e.button === 0) { 
+    if (e.button === 0) {
       recordNewAction([]);
       return;
     }
-    if (e.button !== 2) return; 
-    const square = pixelToSquare(e.clientX, e.clientY, board);
-    currentFrom = square;
+    if (e.button !== 2) return;
+    currentFrom = pixelToSquare(e.clientX, e.clientY, board);
   });
 
-  // --- EDITED mouseup listener (Yellow for Variations) ---
-  board.addEventListener('mouseup', e => {
+  board.addEventListener('mouseup', async e => {
     if (e.button !== 2 || !currentFrom) return;
-    
     const toSquare = pixelToSquare(e.clientX, e.clientY, board);
-    
-    if (toSquare !== currentFrom) {
-      const currentState = historyLog[currentHistoryIndex] || [];
-      const nextState = [...currentState];
-      const existingMoveIndex = nextState.findIndex(
-        move => move.from === currentFrom && move.to === toSquare
-      );
-
-      if (existingMoveIndex !== -1) {
-        // --- DELETE ACTION ---
-        nextState.splice(existingMoveIndex, 1);
-      } else {
-        // --- ADD ACTION ---
-        let arrowColor;
-        let player; 
-        const isCounted = !isWKeyPressed; // Determine if it's a "main" move
-        
-        // 1. Set player based on keys
-        if (e.shiftKey && e.altKey) { player = 'black'; }
-        else if (e.altKey) { player = 'white'; }
-        else if (e.ctrlKey) { player = 'white'; }
-        else { player = 'black'; }
-
-        // 2. --- COLOR LOGIC (Yellow for Variations) ---
-        if (isWKeyPressed) {
-            // It's a "possible move" (variation), force it to be Yellow
-            arrowColor = COLOR_YELLOW;
-        } else {
-            // It's a "main line" move, use the original key logic
-            if (e.shiftKey && e.altKey) { arrowColor = COLOR_SHIFT_ALT; }
-            else if (e.altKey) { arrowColor = COLOR_ALT; }
-            else if (e.ctrlKey) { arrowColor = COLOR_CTRL; }
-            else { arrowColor = COLOR_GREEN; }
-        }
-        // --- END NEW COLOR LOGIC ---
-
-        // 3. Determine Number (This is the default logic: 1,1,2,2,3,3...)
-        let numberToDisplay;
-        let lastCountedNumber = 0;
-        let countedArrowIndex = 0;
-        currentState.forEach(move => {
-          if (move.isCounted) {
-            countedArrowIndex++;
-            lastCountedNumber = move.number; 
-          }
-        });
-
-        if (isCounted) {
-          numberToDisplay = Math.ceil((countedArrowIndex + 1) / 2);
-        } else {
-          numberToDisplay = (lastCountedNumber === 0) ? 1 : lastCountedNumber;
-        }
-        
-        // 4. --- SET VARIATION ID ---
-        const variationID = isWKeyPressed ? currentVariationID : 0; 
-        
-        nextState.push({
-          from: currentFrom,
-          to: toSquare,
-          color: arrowColor,
-          player: player,
-          isCounted: isCounted,
-          number: numberToDisplay,
-          variationID: variationID // <-- STORE THE VARIATION ID
-        });
-      }
-      
-      recordNewAction(nextState);
+    if (toSquare === currentFrom) {
+      currentFrom = null;
+      return;
     }
+
+    const currentState = historyLog[currentHistoryIndex] || [];
+    const nextState = [...currentState];
+
+    let arrowColor;
+    const isCounted = !isWKeyPressed;
+    if (isWKeyPressed) arrowColor = COLOR_YELLOW;
+    else if (e.shiftKey && e.altKey) arrowColor = COLOR_SHIFT_ALT;
+    else if (e.altKey) arrowColor = COLOR_ALT;
+    else if (e.ctrlKey) arrowColor = COLOR_CTRL;
+    else arrowColor = COLOR_GREEN;
+
+    let numberToDisplay;
+    let lastCountedNumber = 0, countedArrowIndex = 0;
+    currentState.forEach(move => { if (move.isCounted) { countedArrowIndex++; lastCountedNumber = move.number; }});
+    numberToDisplay = isCounted ? Math.ceil((countedArrowIndex + 1) / 2) : (lastCountedNumber === 0 ? 1 : lastCountedNumber);
+
+    const variationID = isWKeyPressed ? currentVariationID : 0;
+
+    const newArrow = {
+      from: currentFrom,
+      to: toSquare,
+      color: arrowColor,
+      isCounted: isCounted,
+      number: numberToDisplay,
+      variationID
+    };
+
+    nextState.push(newArrow);
+
+    recordNewAction(nextState);
+
     currentFrom = null;
   });
-  // --- END EDITED mouseup listener ---
 
-
-  // --- EDITED keydown listener ---
   window.addEventListener('keydown', e => {
-    if (e.repeat) return; // Ignore key-repeats
-
+    if (e.repeat) return;
     const key = e.key.toLowerCase();
-    const isUndoRedo = e.ctrlKey || e.metaKey; 
+    const isUndoRedo = e.ctrlKey || e.metaKey;
 
-    // 1. Handle Undo/Redo
     if (isUndoRedo && key === 'z') { e.preventDefault(); undoMove(); return; }
     if (isUndoRedo && key === 'y') { e.preventDefault(); redoMove(); return; }
-    
-    // 2. Handle Highlight-mode key ('h')
-    if (key === 'h' && !isUndoRedo) {
-      e.preventDefault();
-      clearToggledHighlight();
-      clearGHighlight(); // Clear other highlight mode
-      isHighlightActive = true;
-      highlightBuffer = ""; // Reset buffer
-      return;
-    }
-    
-    // 3. Handle Variation Highlight-mode key ('g')
-    if (key === 'g' && !isUndoRedo) {
-      e.preventDefault();
-      clearToggledHighlight();
-      clearHHighlight(); // Clear other highlight mode
-      isVariationHighlightActive = true;
-      variationHighlightBuffer = "";
-      return;
-    }
-    
-    // 4. Handle Number keys
+
+    if (key === 'h' && !isUndoRedo) { e.preventDefault(); clearToggledHighlight(); clearGHighlight(); isHighlightActive = true; highlightBuffer = ""; return; }
+    if (key === 'g' && !isUndoRedo) { e.preventDefault(); clearToggledHighlight(); clearHHighlight(); isVariationHighlightActive = true; variationHighlightBuffer = ""; return; }
+
     const num = parseInt(e.key);
     if (!isNaN(num) && num >= 0 && num <= 9) {
-      
       if (isHighlightActive) {
-        // --- 'h' key (by number) logic ---
         e.preventDefault();
         const oldBuffer = highlightBuffer;
-        highlightBuffer += e.key; 
-        // Hide old
-        if(oldBuffer) {
-          renderedArrows.filter(arrow => arrow.number.toString() === oldBuffer).forEach(hideArrow);
-        }
-        // Show new
-        renderedArrows
-          .filter(arrow => arrow.number.toString() === highlightBuffer)
-          .forEach(elements => {
-            showArrow(elements, COLOR_PINK, 'url(#arrowhead-pink)');
-          });
+        highlightBuffer += e.key;
+        if (oldBuffer) renderedArrows.filter(arrow => arrow.number.toString() === oldBuffer).forEach(hideArrow);
+        renderedArrows.filter(arrow => arrow.number.toString() === highlightBuffer).forEach(elements => showArrow(elements, COLOR_PINK, 'url(#arrowhead-pink)'));
         return;
-      } 
-      
-      else if (isVariationHighlightActive) {
-        // --- 'g' key (by variation ID) logic ---
+      } else if (isVariationHighlightActive) {
         e.preventDefault();
         const oldBuffer = variationHighlightBuffer;
         variationHighlightBuffer += e.key;
-        const varIDToHighlight = parseInt(variationHighlightBuffer);
-        
-        // Hide old
-        if (oldBuffer) {
-          const oldVarID = parseInt(oldBuffer);
-          if (!isNaN(oldVarID)) {
-             renderedArrows.filter(arrow => arrow.variationID === oldVarID).forEach(hideArrow);
-          }
-        }
-        // Show new
-        renderedArrows
-          .filter(arrow => arrow.variationID === varIDToHighlight)
-          .forEach(elements => {
-            showArrow(elements, COLOR_ROSE, 'url(#arrowhead-rose)');
-          });
+        const oldVarID = parseInt(oldBuffer);
+        if (!isNaN(oldVarID)) renderedArrows.filter(arrow => arrow.variationID === oldVarID).forEach(hideArrow);
+        renderedArrows.filter(arrow => arrow.variationID === parseInt(variationHighlightBuffer)).forEach(elements => showArrow(elements, COLOR_ROSE, 'url(#arrowhead-rose)'));
         return;
-      } 
-      
-      else if (isWKeyPressed) {
-        // --- 'w' key (set variation ID) logic ---
-        e.preventDefault();
-        currentVariationID = num; // 'w' + '1' sets varID = 1. 'w' + '0' sets varID = 0.
-        return;
-      }
+      } else if (isWKeyPressed) { e.preventDefault(); currentVariationID = num; return; }
     }
 
-    // 5. Handle other keys
-    if (key === 'w') {
-      isWKeyPressed = true;
-    }
-    
-    if (key === 'x') {
-      recordNewAction([]);
-    }
+    if (key === 'w') isWKeyPressed = true;
+    if (key === 'x') recordNewAction([]);
   });
-  // --- END EDITED keydown ---
 
-
-  // --- EDITED keyup listener ---
   window.addEventListener('keyup', e => {
     const key = e.key.toLowerCase();
-    
-    if (key === 'w') {
-      isWKeyPressed = false;
-      // It's "sticky", so we do NOT reset currentVariationID
-    }
-
-    // Check for 'h' key release
-    if (key === 'h') {
-      e.preventDefault();
-      clearHHighlight();
-    }
-    
-    // Check for 'g' key release
-    if (key === 'g') {
-      e.preventDefault();
-      clearGHighlight();
-    }
+    if (key === 'w') isWKeyPressed = false;
+    if (key === 'h') { e.preventDefault(); clearHHighlight(); }
+    if (key === 'g') { e.preventDefault(); clearGHighlight(); }
   });
-  // --- END EDITED keyup ---
 }
 
 setTimeout(initDrawArrows, 2000);
