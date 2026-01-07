@@ -38,4 +38,13 @@ router.post("/login", async (req, res) => {
   }
 });
 
+router.get('/users',async(req,res)=>{
+  try{
+    const users=await User.find();
+    res.json(users);
+  }catch(err){
+    res.status(500).json({ error: err.message });
+  } 
+});
+
 export default router;
