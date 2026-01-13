@@ -1,6 +1,5 @@
-const backendUrl = "http://localhost:5000/api"; // replace with your backend URL
+const backendUrl = "http://localhost:5000/api";
 
-// Send OTP
 document.getElementById("sendOtpBtn").addEventListener("click", async () => {
   const email = document.getElementById("email").value.trim();
   if (!email) return showMessage("Enter your email.");
@@ -24,7 +23,6 @@ document.getElementById("sendOtpBtn").addEventListener("click", async () => {
   }
 });
 
-// Reset Password
 document.getElementById("resetBtn").addEventListener("click", async () => {
   const email = document.getElementById("email").value.trim();
   const otp = document.getElementById("otp").value.trim();
