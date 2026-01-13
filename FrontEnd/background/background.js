@@ -1,28 +1,26 @@
-console.log("🔥 Background service worker loaded");
+console.log("🔥 ChckM8 background loaded");
 
-// Create offscreen document if not exists
-async function ensureOffscreen() {
-  const exists = await chrome.offscreen.hasDocument();
-  if (exists) {
-    console.log("♟️ Offscreen already exists");
-    return;
-  }
-
+async function createOffscreen() {
+  if (await chrome.offscreen.hasDocument()) return;
   await chrome.offscreen.createDocument({
-    url: "offscreen.html",
-    reasons: ["WORKERS"],
-    justification: "Run Stockfish chess engine"
+    url: 'offscreen.html',
+    reasons: ['WORKERS'],
+    justification: 'Stockfish engine for arrow analysis'
   });
-
-  console.log("✅ Offscreen document created");
+  console.log("Offscreen document created");
 }
 
-// Start on load
-ensureOffscreen();
+createOffscreen();
 
-// Receive messages from offscreen (Stockfish output)
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "STOCKFISH_OUTPUT") {
-    console.log("♟️ SF:", msg.data);
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "ANALYZE_MOVE") {
+    chrome.runtime.sendMessage({
+      type: "ANALYZE_FEN",
+      fen: message.fen,
+      move: message.move   // added move we want to classify
+    }, response => {
+      sendResponse(response);
+    });
+    return true; // keep channel open for async response
   }
 });

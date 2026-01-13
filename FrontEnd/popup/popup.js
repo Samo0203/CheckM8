@@ -1,6 +1,5 @@
-const backendUrl = "http://localhost:5000/api"; // replace with your backend URL
+const backendUrl = "http://localhost:5000/api";
 
-// Login
 document.getElementById("loginBtn").addEventListener("click", async () => {
   const username = document.getElementById("username").value.trim();
   const password = document.getElementById("password").value.trim();
@@ -24,7 +23,6 @@ document.getElementById("loginBtn").addEventListener("click", async () => {
   }
 });
 
-// Logout
 document.getElementById("logoutBtn").addEventListener("click", () => {
   chrome.storage.sync.remove("loggedInUser", () => showMessage("Logged out"));
 });

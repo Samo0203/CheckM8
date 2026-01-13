@@ -38,11 +38,11 @@ router.post("/login", async (req, res) => {
   }
 });
 
-router.get('/users',async(req,res)=>{
-  try{
-    const users=await User.find();
+router.get('/users', async (req, res) => {
+  try {
+    const users = await User.find();
     res.json(users);
-  }catch(err){
+  } catch (err) {
     res.status(500).json({ error: err.message });
   } 
 });
