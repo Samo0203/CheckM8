@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Lichess V10.0",
-  "version": "1.5.0",
-  "description": "Customize, colorize, and number your arrows on Lichess — with analysis.",
+  "name": "ChckM8",
+  "version": "1.6.0",
+  "description": "Customize, colorize, number and analyze arrows on Lichess — with persistent boards",
 
   "icons": {
     "16": "assets/icons/icon16.png",
@@ -37,15 +37,15 @@
     }
   ],
 
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "stockfish/stockfish.js",
-        "offscreen.html",
-        "offscreen.js",
-        "assets/icons/*"
-      ],
-      "matches": ["<all_urls>"]
-    }
-  ]
+"web_accessible_resources": [
+  {
+    "resources": [
+      "stockfish/stockfish.js",
+      "stockfish/stockfish.wasm",
+      "offscreen.html",
+      "offscreen.js"
+    ],
+    "matches": ["<all_urls>"]
+  }
+]
 }
