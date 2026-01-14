@@ -45,7 +45,7 @@ const ARROWHEAD_MAP = {
 };
 
 // ────────────────────────────────────────────────
-// Missing highlight clearing functions (added back)
+// Highlight clearing functions
 function clearToggledHighlight() {
   if (toggledHighlight.number) {
     renderedArrows
@@ -215,7 +215,7 @@ async function saveCurrentBoard() {
 }
 
 // ────────────────────────────────────────────────
-// Arrow Head Definitions – made a bit bigger
+// Arrow Head Definitions – a bit bigger
 // ────────────────────────────────────────────────
 
 function addArrowHeadDefs() {
@@ -230,13 +230,13 @@ function addArrowHeadDefs() {
     const marker = document.createElementNS(NS, 'marker');
     marker.setAttribute('id', id);
     marker.setAttribute('orient', 'auto');
-    marker.setAttribute('markerWidth', '5.5');   // increased size
+    marker.setAttribute('markerWidth', '5.5');
     marker.setAttribute('markerHeight', '5.5');
-    marker.setAttribute('refX', '5.0');          // adjusted for larger head
+    marker.setAttribute('refX', '5.0');
     marker.setAttribute('refY', '2.75');
 
     const path = document.createElementNS(NS, 'path');
-    path.setAttribute('d', 'M0,0 L0,5.5 L5.5,2.75 Z');  // scaled up triangle
+    path.setAttribute('d', 'M0,0 L0,5.5 L5.5,2.75 Z');
     path.setAttribute('fill', color);
     marker.appendChild(path);
     defs.appendChild(marker);
@@ -255,10 +255,25 @@ function addArrowHeadDefs() {
 }
 
 // ────────────────────────────────────────────────
+// Analysis style helper (border only, no icon inside bubble)
+function getAnalysisStyle(analysis) {
+  switch (analysis) {
+    case 'best':
+      return { borderColor: '#2196f3', title: 'Best move' };     // blue
+    case 'good':
+      return { borderColor: '#4caf50', title: 'Good move' };     // green
+    case 'bad':
+      return { borderColor: '#f44336', title: 'Bad move' };      // red
+    default:
+      return { borderColor: '#9e9e9e', title: 'Unknown' };       // gray
+  }
+}
+
+// ────────────────────────────────────────────────
 // Arrow Rendering
 // ────────────────────────────────────────────────
 
-function createArrow(from, to, number, color, isCounted, variationID) {
+function createArrow(from, to, number, color, isCounted, variationID, analysis = 'unknown') {
   const svgEl = ensureSvg();
   if (!svgEl) return null;
 
@@ -267,7 +282,7 @@ function createArrow(from, to, number, color, isCounted, variationID) {
 
   const cx = (x1 + x2) / 2;
   const cy = (y1 + y2) / 2;
-  const offset = 0.38;  // slightly adjusted for larger head
+  const offset = 0.38;
   const angle = Math.atan2(y2 - y1, x2 - x1);
   const perp = angle + Math.PI / 2;
   const nx = cx + offset * Math.cos(perp);
@@ -302,17 +317,27 @@ function createArrow(from, to, number, color, isCounted, variationID) {
   const circle = document.createElementNS(NS, 'circle');
   circle.setAttribute('cx', nx);
   circle.setAttribute('cy', ny);
-  circle.setAttribute('r', '0.25');  // slightly larger bubble to match head
+  circle.setAttribute('r', '0.25');
   circle.setAttribute('fill', color);
   circle.setAttribute('stroke', 'white');
   circle.setAttribute('stroke-width', '0.03');
   g.appendChild(circle);
 
+  // ─── Analysis visualization: colored border only ───
+  const analysisStyle = getAnalysisStyle(analysis);
+
+  // Colored border around bubble (thicker for visibility)
+  circle.setAttribute('stroke', analysisStyle.borderColor);
+  circle.setAttribute('stroke-width', '0.08');
+
+  // Hover tooltip with full description
+  g.setAttribute('title', analysisStyle.title);
+
   const text = document.createElementNS(NS, 'text');
   text.setAttribute('x', nx);
   text.setAttribute('y', ny + 0.015);
   text.setAttribute('fill', 'white');
-  text.setAttribute('font-size', '0.28');  // slightly larger number
+  text.setAttribute('font-size', '0.28');
   text.setAttribute('text-anchor', 'middle');
   text.setAttribute('dominant-baseline', 'middle');
   text.textContent = number;
@@ -327,7 +352,8 @@ function createArrow(from, to, number, color, isCounted, variationID) {
     isCounted,
     variationID,
     from,
-    to
+    to,
+    analysis
   };
 
   g.addEventListener('mouseenter', () => {
@@ -378,7 +404,6 @@ function createArrow(from, to, number, color, isCounted, variationID) {
         );
         if (trackIndex !== -1) currentArrowsOnBoard.splice(trackIndex, 1);
 
-        // Visual feedback
         g.style.transition = 'opacity 0.4s';
         g.style.opacity = '0.15';
         setTimeout(() => {
@@ -442,7 +467,7 @@ function redrawAllArrows() {
   clearSvg();
   const state = historyLog[currentHistoryIndex] || [];
   state.forEach(a => {
-    const el = createArrow(a.from, a.to, a.number, a.color, a.isCounted, a.variationID);
+    const el = createArrow(a.from, a.to, a.number, a.color, a.isCounted, a.variationID, a.analysis);
     if (el) renderedArrows.push(el);
   });
   showAllArrowsInCurrentState();
@@ -499,7 +524,6 @@ function initDrawArrows() {
 
   board.addEventListener('contextmenu', e => e.preventDefault());
 
-  // Right-click drag to draw arrow
   board.addEventListener('mousedown', e => {
     if (e.button !== 2) return;
     e.preventDefault();
@@ -615,7 +639,7 @@ function initDrawArrows() {
   // ─── LEFT CLICK on empty board area → DELETE ALL ARROWS ───
   board.addEventListener('click', e => {
     if (e.button !== 0) return;
-    if (e.target.closest('g')) return; // ignore bubble clicks
+    if (e.target.closest('g')) return;
 
     if (historyLog[currentHistoryIndex]?.length > 0) {
       historyLog = [[]];

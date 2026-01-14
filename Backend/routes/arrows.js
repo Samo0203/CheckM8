@@ -3,17 +3,12 @@ import Arrow from "../models/Arrow.js";
 
 const router = express.Router();
 
-// ---------------- SAVE ARROW ----------------
 router.post("/save-arrow", async (req, res) => {
-  const { from, to, color, number, user, variationID } = req.body;
+  const { from, to, color, number, user, boardId, variationID, analysis } = req.body;
 
-  // 🔒 Strong validation (clear errors)
-  if (!from) return res.status(400).json({ error: "from is required" });
-  if (!to) return res.status(400).json({ error: "to is required" });
-  if (!color) return res.status(400).json({ error: "color is required" });
-  if (number === undefined) return res.status(400).json({ error: "number is required" });
-  if (!user) return res.status(400).json({ error: "user is required" });
-  if (variationID === undefined) return res.status(400).json({ error: "variationID is required" });
+  if (!from || !to || !color || number === undefined || !user || !boardId || variationID === undefined || !analysis) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
 
   try {
     const newArrow = new Arrow({
@@ -22,7 +17,9 @@ router.post("/save-arrow", async (req, res) => {
       color,
       number,
       user,
+      boardId,
       variationID,
+      analysis,
       createdAt: new Date(),
     });
 
@@ -38,12 +35,14 @@ router.post("/save-arrow", async (req, res) => {
   }
 });
 
-// ---------------- GET ARROWS BY USER ----------------
 router.get("/get-arrows/:user", async (req, res) => {
   const { user } = req.params;
+  const { boardId } = req.query;
 
   try {
-    const arrows = await Arrow.find({ user }).sort({ createdAt: 1 });
+    const query = { user };
+    if (boardId) query.boardId = boardId;
+    const arrows = await Arrow.find(query).sort({ createdAt: 1 });
     res.json(arrows);
   } catch (err) {
     console.error("Get arrows error:", err);

@@ -12,9 +12,9 @@ export const sendOTPEmail = async (to, otp) => {
   });
 
   await transporter.sendMail({
-    from: `"CheckM8" <${process.env.SMTP_USER}>`,
+    from: `"ChckM8" <${process.env.SMTP_USER}>`,
     to,
-    subject: "Your OTP for CheckM8",
+    subject: "Your OTP for ChckM8",
     text: `Your OTP code is: ${otp}`
   });
 };
