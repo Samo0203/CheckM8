@@ -733,6 +733,56 @@ setInterval(async () => {
   lastKnownFen = currentFen;
 }, 2200);
 
+// ─── Improved: Listen for board load message with retry until board exists ───
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === "LOAD_BOARD" && msg.boardId) {
+    // Wait until board element exists before loading
+    const tryLoad = (attempt = 0) => {
+      if (getBoard()) {
+        loadSavedBoard(msg.boardId);
+        sendResponse({ status: "loaded" });
+      } else if (attempt < 10) {
+        // Retry every 500ms, up to ~5 seconds
+        setTimeout(() => tryLoad(attempt + 1), 500);
+      } else {
+        console.error("Board element not found after retries");
+        sendResponse({ status: "board_not_ready" });
+      }
+    };
+
+    tryLoad();
+    return true; // Keep message channel open for async response
+  }
+});
+
+// ─── Function to load arrows for a saved board ───
+async function loadSavedBoard(boardId) {
+  const user = await getLoggedInUser();
+  if (!user) return console.warn("No user logged in – can't load board");
+
+  try {
+    const res = await fetch(`${backendUrl}/get-arrows/${encodeURIComponent(user)}?boardId=${boardId}`);
+    if (!res.ok) throw new Error("Failed to fetch arrows");
+
+    const arrows = await res.json();
+
+    // Clear current state
+    historyLog = [arrows];
+    currentHistoryIndex = 0;
+    currentArrowsOnBoard = arrows.map(a => ({ ...a, analysis: a.analysis || 'unknown' }));
+
+    // Make sure SVG exists
+    ensureSvg();
+
+    // Redraw everything
+    redrawAllArrows();
+
+    console.log(`Loaded ${arrows.length} arrows for board ${boardId}`);
+  } catch (err) {
+    console.error("Failed to load board arrows:", err);
+  }
+}
+
 // Start
 const observer = new MutationObserver(() => {
   if (getBoard() && !svg) {
