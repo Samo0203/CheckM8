@@ -31,7 +31,7 @@ function showMessage(msg) {
   document.getElementById("message").innerText = msg;
 }
 
-// ─── New: Load and display boards ───
+// ─── Load and display saved boards ───
 document.getElementById("myBoardsBtn").addEventListener("click", async () => {
   const user = await new Promise(r => chrome.storage.sync.get("loggedInUser", d => r(d.loggedInUser)));
   if (!user) return showMessage("Please login first");
@@ -43,7 +43,7 @@ document.getElementById("myBoardsBtn").addEventListener("click", async () => {
   msgEl.innerText = "Loading boards...";
 
   try {
-    const res = await fetch(`${backendUrl}/get-boards/${user}`);
+    const res = await fetch(`${backendUrl}/get-boards/${encodeURIComponent(user)}`);
     const data = await res.json();
 
     if (!res.ok) throw new Error(data.error || "Failed to load boards");
@@ -58,22 +58,51 @@ document.getElementById("myBoardsBtn").addEventListener("click", async () => {
 
     data.forEach(board => {
       const item = document.createElement('div');
-      item.style.padding = '5px';
-      item.style.borderBottom = '1px solid #ccc';
+      item.style.padding = '8px';
+      item.style.borderBottom = '1px solid #ddd';
       item.style.cursor = 'pointer';
-      item.innerText = `Board ${board.boardId.slice(0, 8)} - ${new Date(board.createdAt).toLocaleString()}`;
+      item.innerHTML = `
+        <strong>Board ${board.boardId.slice(0, 8)}</strong><br>
+        <small>${new Date(board.createdAt).toLocaleString()}</small>
+      `;
+
       item.onclick = () => {
-        // Open Lichess analysis with FEN
-        chrome.tabs.create({ url: `https://lichess.org/analysis/${encodeURIComponent(board.fen)}` }, tab => {
-          // Send message to content script to load arrows (content script must listen)
-          setTimeout(() => {
-            chrome.tabs.sendMessage(tab.id, { type: "LOAD_BOARD", boardId: board.boardId });
-          }, 1500);  // delay for page load
+        const url = `https://lichess.org/analysis/${encodeURIComponent(board.fen)}`;
+        chrome.tabs.create({ url }, (tab) => {
+          // Wait for tab to fully load
+          chrome.tabs.onUpdated.addListener(function listener(tabId, changeInfo) {
+            if (tabId === tab.id && changeInfo.status === 'complete') {
+              chrome.tabs.onUpdated.removeListener(listener);
+
+              // Give chessground time to initialize (increased delay + retry)
+              setTimeout(() => {
+                chrome.tabs.sendMessage(tab.id, {
+                  type: "LOAD_BOARD",
+                  boardId: board.boardId
+                }, (response) => {
+                  if (chrome.runtime.lastError) {
+                    console.warn("Message send failed (normal on first try):", chrome.runtime.lastError.message);
+                    // Retry once more after extra delay
+                    setTimeout(() => {
+                      chrome.tabs.sendMessage(tab.id, {
+                        type: "LOAD_BOARD",
+                        boardId: board.boardId
+                      });
+                    }, 2000);
+                  } else {
+                    console.log("Board load message sent successfully");
+                  }
+                });
+              }, 3000); // 3 seconds delay – adjust if needed (Lichess can be slow)
+            }
+          });
         });
       };
+
       listEl.appendChild(item);
     });
   } catch (err) {
-    msgEl.innerText = "Error: " + err.message;
+    msgEl.innerText = "Error loading boards: " + err.message;
+    msgEl.style.color = "red";
   }
 });
