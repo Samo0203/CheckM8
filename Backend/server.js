@@ -1,3 +1,5 @@
+// server.js
+
 import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
@@ -8,13 +10,26 @@ import arrowRoutes from "./routes/arrows.js";
 import boardRoutes from "./routes/boards.js";
 
 dotenv.config();
+
 const app = express();
-app.use(cors());
+
+// ──────────────────────────────
+//   IMPROVED CORS CONFIGURATION
+// ──────────────────────────────
+app.use(cors({
+    origin: '*',                    // ← allows literally everyone
+    methods: ['GET','POST','OPTIONS'],
+    allowedHeaders: ['Content-Type']
+}));
+
+
+
+// ... rest of your code remains the same
 app.use(express.json());
 
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB connected"))
-  .catch(err => console.log(err));
+  .catch(err => console.log("MongoDB connection error:", err));
 
 app.use("/api", authRoutes);
 app.use("/api", otpRoutes);
