@@ -31,7 +31,7 @@ function showMessage(msg) {
   document.getElementById("message").innerText = msg;
 }
 
-// ─── Load and display saved boards ───
+// **FIXED: Improved board loading with better timing and retries**
 document.getElementById("myBoardsBtn").addEventListener("click", async () => {
   const user = await new Promise(r => chrome.storage.sync.get("loggedInUser", d => r(d.loggedInUser)));
   if (!user) return showMessage("Please login first");
@@ -68,32 +68,51 @@ document.getElementById("myBoardsBtn").addEventListener("click", async () => {
 
       item.onclick = () => {
         const url = `https://lichess.org/analysis/${encodeURIComponent(board.fen)}`;
+        console.log("[POPUP] Creating tab for board:", board.boardId);
+        
         chrome.tabs.create({ url }, (tab) => {
-          // Wait for tab to fully load
+          let messageAttempts = 0;
+          const maxAttempts = 5;
+          
+          // **FIX: Better tab ready detection**
           chrome.tabs.onUpdated.addListener(function listener(tabId, changeInfo) {
-            if (tabId === tab.id && changeInfo.status === 'complete') {
-              chrome.tabs.onUpdated.removeListener(listener);
-
-              // Give chessground time to initialize (increased delay + retry)
-              setTimeout(() => {
-                chrome.tabs.sendMessage(tab.id, {
-                  type: "LOAD_BOARD",
-                  boardId: board.boardId
-                }, (response) => {
-                  if (chrome.runtime.lastError) {
-                    console.warn("Message send failed (normal on first try):", chrome.runtime.lastError.message);
-                    // Retry once more after extra delay
-                    setTimeout(() => {
-                      chrome.tabs.sendMessage(tab.id, {
-                        type: "LOAD_BOARD",
-                        boardId: board.boardId
-                      });
-                    }, 2000);
-                  } else {
-                    console.log("Board load message sent successfully");
-                  }
-                });
-              }, 3000); // 3 seconds delay – adjust if needed (Lichess can be slow)
+            if (tabId !== tab.id) return;
+            
+            // Wait for complete load
+            if (changeInfo.status === 'complete') {
+              console.log("[POPUP] Tab loaded completely");
+              
+              // **FIX: Progressive retry with longer delays**
+              const sendLoadMessage = (attempt) => {
+                if (attempt >= maxAttempts) {
+                  console.error("[POPUP] Failed to load board after all attempts");
+                  chrome.tabs.onUpdated.removeListener(listener);
+                  return;
+                }
+                
+                // Progressive delay: 2s, 3s, 4s, 5s, 6s
+                const delay = 2000 + (attempt * 1000);
+                
+                console.log(`[POPUP] Attempt ${attempt + 1}/${maxAttempts} - waiting ${delay}ms...`);
+                
+                setTimeout(() => {
+                  chrome.tabs.sendMessage(tab.id, {
+                    type: "LOAD_BOARD",
+                    boardId: board.boardId
+                  }, (response) => {
+                    if (chrome.runtime.lastError) {
+                      console.warn(`[POPUP] Attempt ${attempt + 1} failed:`, chrome.runtime.lastError.message);
+                      sendLoadMessage(attempt + 1);
+                    } else {
+                      console.log("[POPUP] Board load message sent successfully:", response);
+                      chrome.tabs.onUpdated.removeListener(listener);
+                    }
+                  });
+                }, delay);
+              };
+              
+              // Start first attempt
+              sendLoadMessage(0);
             }
           });
         });

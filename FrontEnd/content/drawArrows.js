@@ -29,7 +29,7 @@ const COLOR_YELLOW    = 'yellow';
 const COLOR_PINK      = 'deeppink';
 const COLOR_ROSE      = 'hotpink';
 
-// Backend
+// Backend base URL (used only for constructing endpoint – actual request goes through background)
 const backendUrl = "http://localhost:5000/api";
 
 // Arrowhead mapping
@@ -46,6 +46,7 @@ const ARROWHEAD_MAP = {
 
 // ────────────────────────────────────────────────
 // Highlight clearing functions
+// (unchanged)
 function clearToggledHighlight() {
   if (toggledHighlight.number) {
     renderedArrows
@@ -173,44 +174,66 @@ async function analyzeArrow(fromSq, toSq) {
   });
 }
 
+// ────────────────────────────────────────────────
+//  now uses background proxy instead of direct fetch
+// ────────────────────────────────────────────────
+
+function proxyApiCall(endpoint, method = 'POST', body = null) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({
+      type: "PROXY_API_CALL",
+      endpoint,
+      method,
+      body
+    }, response => {
+      if (response?.success) {
+        resolve(response.data);
+      } else {
+        console.warn(`Proxy call failed for /${endpoint}:`, response?.error);
+        reject(new Error(response?.error || 'Proxy request failed'));
+      }
+    });
+  });
+}
+
 async function saveArrowToBackend(arrow) {
   const user = await getLoggedInUser();
-  if (!user || !arrow.from || !arrow.to) return;
+  if (!user || !arrow.from || !arrow.to) return false;
+
+  const payload = {
+    user,
+    boardId: currentBoardId,
+    from: arrow.from,
+    to: arrow.to,
+    color: arrow.color,
+    number: arrow.number,
+    variationID: arrow.variationID,
+    analysis: arrow.analysis || 'unknown'
+  };
 
   try {
-    await fetch(`${backendUrl}/save-arrow`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        user,
-        boardId: currentBoardId,
-        from: arrow.from,
-        to: arrow.to,
-        color: arrow.color,
-        number: arrow.number,
-        variationID: arrow.variationID,
-        analysis: arrow.analysis || 'unknown'
-      })
-    });
+    await proxyApiCall("save-arrow", "POST", payload);
+    console.log("Arrow saved via proxy");
+    return true;
   } catch (err) {
-    console.warn("Failed to save arrow", err);
+    console.warn("Failed to save arrow via proxy", err);
+    return false;
   }
 }
 
 async function saveCurrentBoard() {
   const user = await getLoggedInUser();
-  if (!user) return;
+  if (!user) return false;
 
   const fen = await getCurrentFEN();
 
   try {
-    await fetch(`${backendUrl}/save-board`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user, boardId: currentBoardId, fen })
-    });
+    await proxyApiCall("save-board", "POST", { user, boardId: currentBoardId, fen });
+    console.log("Board saved via proxy");
+    return true;
   } catch (err) {
-    console.warn("Failed to save board", err);
+    console.warn("Failed to save board via proxy", err);
+    return false;
   }
 }
 
@@ -758,28 +781,54 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ─── Function to load arrows for a saved board ───
 async function loadSavedBoard(boardId) {
   const user = await getLoggedInUser();
-  if (!user) return console.warn("No user logged in – can't load board");
+  if (!user) {
+    console.error("[loadSavedBoard] No logged-in user found");
+    return;
+  }
+
+  console.log(`[loadSavedBoard] Starting for user=${user}, boardId=${boardId}`);
 
   try {
-    const res = await fetch(`${backendUrl}/get-arrows/${encodeURIComponent(user)}?boardId=${boardId}`);
-    if (!res.ok) throw new Error("Failed to fetch arrows");
+    // Use proxy instead of direct fetch (consistent with save)
+    const arrows = await proxyApiCall(
+      `get-arrows/${encodeURIComponent(user)}?boardId=${boardId}`,
+      "GET"
+    );
 
-    const arrows = await res.json();
+    console.log(`[loadSavedBoard] API returned ${arrows?.length || 0} arrows`);
+
+    if (!Array.isArray(arrows) || arrows.length === 0) {
+      console.warn("[loadSavedBoard] No arrows returned from server");
+      return;
+    }
 
     // Clear current state
     historyLog = [arrows];
     currentHistoryIndex = 0;
-    currentArrowsOnBoard = arrows.map(a => ({ ...a, analysis: a.analysis || 'unknown' }));
+    currentArrowsOnBoard = arrows.map(a => ({
+      ...a,
+      analysis: a.analysis || 'unknown'
+    }));
 
-    // Make sure SVG exists
-    ensureSvg();
+    console.log(`[loadSavedBoard] Set state with ${currentArrowsOnBoard.length} arrows`);
 
-    // Redraw everything
+    // Ensure SVG layer exists
+    const svgReady = ensureSvg();
+    if (!svgReady) {
+      console.error("[loadSavedBoard] SVG layer could not be created");
+      return;
+    }
+
+    // Force redraw
     redrawAllArrows();
 
-    console.log(`Loaded ${arrows.length} arrows for board ${boardId}`);
+    // Final check after redraw
+    setTimeout(() => {
+      console.log(`[loadSavedBoard] After redraw: ${renderedArrows.length} rendered arrows in SVG`);
+    }, 1500);
+
   } catch (err) {
-    console.error("Failed to load board arrows:", err);
+    console.error("[loadSavedBoard] Failed:", err.message);
   }
 }
 
