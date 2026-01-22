@@ -254,12 +254,12 @@ function addArrowHeadDefs() {
     marker.setAttribute('id', id);
     marker.setAttribute('orient', 'auto');
     marker.setAttribute('markerWidth', '5.5');
-    marker.setAttribute('markerHeight', '5.5');
-    marker.setAttribute('refX', '5.0');
+    marker.setAttribute('markerHeight', '5.8');
+    marker.setAttribute('refX', '4.0');
     marker.setAttribute('refY', '2.75');
 
     const path = document.createElementNS(NS, 'path');
-    path.setAttribute('d', 'M0,0 L0,5.5 L5.5,2.75 Z');
+    path.setAttribute('d', 'M0,0 L0,5.5 L5.8,2.75 Z');
     path.setAttribute('fill', color);
     marker.appendChild(path);
     defs.appendChild(marker);
@@ -461,7 +461,7 @@ function createArrow(from, to, number, color, isCounted, variationID, analysis =
 function showArrow(el, color, marker) {
   el.line.setAttribute('stroke', color);
   el.line.setAttribute('stroke-opacity', '1');
-  el.line.setAttribute('stroke-width', '0.2');
+  el.line.setAttribute('stroke-width', '0.16');
   el.line.setAttribute('marker-end', marker);
 }
 
