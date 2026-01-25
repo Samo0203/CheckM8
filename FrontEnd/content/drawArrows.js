@@ -2,11 +2,12 @@ const NS = 'http://www.w3.org/2000/svg';
 let svg = null;
 let currentFrom = null;
 let isWKeyPressed = false;
+let isBKeyPressed = false; 
 
 // --- HIGHLIGHT & VARIATION LOGIC ---
-let isHighlightActive = false;
+let isHighlightActive = false; // "H" key state
 let highlightBuffer = "";
-let isVariationHighlightActive = false;
+let isVariationHighlightActive = false; // "G" key state
 let variationHighlightBuffer = "";
 let currentVariationID = 0;
 let toggledHighlight = { number: null, color: null };
@@ -20,16 +21,22 @@ let currentHistoryIndex = 0;
 let currentBoardId = crypto.randomUUID?.() || ('board-' + Date.now() + Math.random().toString(36).slice(2));
 let currentArrowsOnBoard = [];
 
+// Tracks the total number of "plies" (half-moves) accumulated from previous boards
+let globalPlyCount = 0; 
+
+// Tracks if the CURRENT board specifically started with a B-skip
+let currentBoardStartedWithB = false;
+
 // Colors
 const COLOR_GREEN     = 'green';
 const COLOR_CTRL      = 'red';
 const COLOR_ALT       = 'blue';
 const COLOR_SHIFT_ALT = 'orange';
 const COLOR_YELLOW    = 'yellow';
-const COLOR_PINK      = 'deeppink';
+const COLOR_PINK      = 'deeppink'; 
 const COLOR_ROSE      = 'hotpink';
 
-// Backend base URL (used only for constructing endpoint – actual request goes through background)
+// Backend base URL
 const backendUrl = "http://localhost:5000/api";
 
 // Arrowhead mapping
@@ -45,37 +52,111 @@ const ARROWHEAD_MAP = {
 };
 
 // ────────────────────────────────────────────────
+// Constants for Perfect Lichess Sizing
+// ────────────────────────────────────────────────
+
+const STROKE_WIDTH_MAIN = 0.15625; 
+const STROKE_WIDTH_SHINE = 0.21;
+const RADIUS_MAIN = 0.25;
+
+const STROKE_WIDTH_VAR = 0.08; 
+const STROKE_WIDTH_SHINE_VAR = 0.13;
+const RADIUS_VAR = 0.25; 
+
+const HEAD_WIDTH_MAIN = 0.75;      
+const HEAD_HEIGHT_MAIN = 0.75;
+const HEAD_REF_X_MAIN = 0.6;       
+
+const HEAD_WIDTH_SHINE = 0.85;     
+const HEAD_HEIGHT_SHINE = 0.85;
+const HEAD_REF_X_SHINE = 0.65;    
+
+// ────────────────────────────────────────────────
+// UI Injection (Controls)
+// ────────────────────────────────────────────────
+function injectUI() {
+  if (document.getElementById('checkm8-controls')) return;
+
+  const container = document.createElement('div');
+  container.id = 'checkm8-controls';
+  container.style.position = 'fixed';
+  container.style.top = '80px'; 
+  container.style.right = '20px';
+  container.style.zIndex = '99999';
+  container.style.display = 'flex';
+  container.style.flexDirection = 'column';
+  container.style.gap = '8px';
+
+  const btnNew = document.createElement('button');
+  btnNew.innerText = 'New Board';
+  btnNew.style.padding = '10px 14px';
+  btnNew.style.background = '#3692e7'; 
+  btnNew.style.color = 'white';
+  btnNew.style.border = 'none';
+  btnNew.style.borderRadius = '4px';
+  btnNew.style.cursor = 'pointer';
+  btnNew.style.fontWeight = 'bold';
+  btnNew.style.boxShadow = '0 2px 5px rgba(0,0,0,0.3)';
+  btnNew.onclick = handleNewBoard;
+
+  const btnShow = document.createElement('button');
+  btnShow.innerText = 'Show Boards'; 
+  btnShow.style.padding = '10px 14px';
+  btnShow.style.background = '#629924'; 
+  btnShow.style.color = 'white';
+  btnShow.style.border = 'none';
+  btnShow.style.borderRadius = '4px';
+  btnShow.style.cursor = 'pointer';
+  btnShow.style.fontWeight = 'bold';
+  btnShow.style.boxShadow = '0 2px 5px rgba(0,0,0,0.3)';
+  btnShow.onclick = handleShowBoards;
+
+  container.appendChild(btnNew);
+  container.appendChild(btnShow);
+  document.body.appendChild(container);
+}
+
+async function handleNewBoard() {
+  await saveCurrentBoard();
+  
+  const state = historyLog[currentHistoryIndex] || [];
+  let mainArrowCount = 0;
+  state.forEach(a => {
+      if (!a.isVariation && a.isCounted) {
+          mainArrowCount++;
+      }
+  });
+
+  const offset = currentBoardStartedWithB ? 1 : 0;
+  globalPlyCount += mainArrowCount + offset;
+
+  currentBoardStartedWithB = false;
+  currentBoardId = crypto.randomUUID?.() || ('board-' + Date.now() + Math.random().toString(36).slice(2));
+  currentArrowsOnBoard = [];
+  historyLog = [[]];
+  currentHistoryIndex = 0;
+  
+  clearSvg();
+  
+  const nextMove = Math.ceil((globalPlyCount + 1) / 2);
+  console.log(`New Board. Continuing from Ply: ${globalPlyCount}. Next Move: ${nextMove}`);
+}
+
+async function handleShowBoards() {
+  await saveCurrentBoard();
+  const viewUrl = `http://localhost:5000/view/${currentBoardId}`;
+  window.open(viewUrl, '_blank');
+}
+
+// ────────────────────────────────────────────────
 // Highlight clearing functions
-// (unchanged)
+// ────────────────────────────────────────────────
 function clearToggledHighlight() {
   if (toggledHighlight.number) {
     renderedArrows
       .filter(el => el.number.toString() === toggledHighlight.number && el.color === toggledHighlight.color)
       .forEach(hideArrow);
     toggledHighlight = { number: null, color: null };
-  }
-}
-
-function clearHHighlight() {
-  if (isHighlightActive) {
-    isHighlightActive = false;
-    renderedArrows
-      .filter(arrow => arrow.number.toString() === highlightBuffer)
-      .forEach(hideArrow);
-    highlightBuffer = "";
-  }
-}
-
-function clearGHighlight() {
-  if (isVariationHighlightActive) {
-    isVariationHighlightActive = false;
-    const varID = parseInt(variationHighlightBuffer);
-    if (!isNaN(varID)) {
-      renderedArrows
-        .filter(arrow => arrow.variationID === varID)
-        .forEach(hideArrow);
-    }
-    variationHighlightBuffer = "";
   }
 }
 
@@ -90,7 +171,10 @@ function getBoard() {
 function ensureSvg() {
   const board = getBoard();
   if (!board) return null;
-  if (svg) return svg;
+  if (svg) {
+      injectUI(); 
+      return svg;
+  }
 
   const parent = board.parentElement;
   if (!parent) return null;
@@ -109,6 +193,7 @@ function ensureSvg() {
   parent.appendChild(svg);
 
   addArrowHeadDefs();
+  injectUI();
   return svg;
 }
 
@@ -174,10 +259,6 @@ async function analyzeArrow(fromSq, toSq) {
   });
 }
 
-// ────────────────────────────────────────────────
-//  now uses background proxy instead of direct fetch
-// ────────────────────────────────────────────────
-
 function proxyApiCall(endpoint, method = 'POST', body = null) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({
@@ -213,7 +294,6 @@ async function saveArrowToBackend(arrow) {
 
   try {
     await proxyApiCall("save-arrow", "POST", payload);
-    console.log("Arrow saved via proxy");
     return true;
   } catch (err) {
     console.warn("Failed to save arrow via proxy", err);
@@ -224,21 +304,18 @@ async function saveArrowToBackend(arrow) {
 async function saveCurrentBoard() {
   const user = await getLoggedInUser();
   if (!user) return false;
-
   const fen = await getCurrentFEN();
-
   try {
     await proxyApiCall("save-board", "POST", { user, boardId: currentBoardId, fen });
-    console.log("Board saved via proxy");
+    console.log("Board saved.");
     return true;
   } catch (err) {
-    console.warn("Failed to save board via proxy", err);
     return false;
   }
 }
 
 // ────────────────────────────────────────────────
-// Arrow Head Definitions – a bit bigger
+// Arrow Head Definitions
 // ────────────────────────────────────────────────
 
 function addArrowHeadDefs() {
@@ -252,18 +329,51 @@ function addArrowHeadDefs() {
     const color = key;
     const marker = document.createElementNS(NS, 'marker');
     marker.setAttribute('id', id);
+    marker.setAttribute('markerUnits', 'userSpaceOnUse');
     marker.setAttribute('orient', 'auto');
-    marker.setAttribute('markerWidth', '5.5');
-    marker.setAttribute('markerHeight', '5.8');
-    marker.setAttribute('refX', '4.0');
-    marker.setAttribute('refY', '2.75');
+    marker.setAttribute('markerWidth', HEAD_WIDTH_MAIN.toString()); 
+    marker.setAttribute('markerHeight', HEAD_HEIGHT_MAIN.toString());
+    marker.setAttribute('refX', HEAD_REF_X_MAIN.toString()); 
+    marker.setAttribute('refY', (HEAD_HEIGHT_MAIN / 2).toString());
 
     const path = document.createElementNS(NS, 'path');
-    path.setAttribute('d', 'M0,0 L0,5.5 L5.8,2.75 Z');
+    path.setAttribute('d', `M0,0 L0,${HEAD_HEIGHT_MAIN} L${HEAD_WIDTH_MAIN},${HEAD_HEIGHT_MAIN/2} Z`);
     path.setAttribute('fill', color);
     marker.appendChild(path);
     defs.appendChild(marker);
   });
+
+  // --- WHITE Shine Marker (For Main Lines) ---
+  const shineMarker = document.createElementNS(NS, 'marker');
+  shineMarker.setAttribute('id', 'arrowhead-shine');
+  shineMarker.setAttribute('markerUnits', 'userSpaceOnUse'); 
+  shineMarker.setAttribute('orient', 'auto');
+  shineMarker.setAttribute('markerWidth', HEAD_WIDTH_SHINE.toString()); 
+  shineMarker.setAttribute('markerHeight', HEAD_HEIGHT_SHINE.toString());
+  shineMarker.setAttribute('refX', HEAD_REF_X_SHINE.toString());
+  shineMarker.setAttribute('refY', (HEAD_HEIGHT_SHINE / 2).toString());
+  
+  const shinePath = document.createElementNS(NS, 'path');
+  shinePath.setAttribute('d', `M0,0 L0,${HEAD_HEIGHT_SHINE} L${HEAD_WIDTH_SHINE},${HEAD_HEIGHT_SHINE/2} Z`);
+  shinePath.setAttribute('fill', 'white'); 
+  shineMarker.appendChild(shinePath);
+  defs.appendChild(shineMarker);
+
+  // --- BLACK Shine Marker (For Variations) ---
+  const shineBlackMarker = document.createElementNS(NS, 'marker');
+  shineBlackMarker.setAttribute('id', 'arrowhead-shine-black');
+  shineBlackMarker.setAttribute('markerUnits', 'userSpaceOnUse'); 
+  shineBlackMarker.setAttribute('orient', 'auto');
+  shineBlackMarker.setAttribute('markerWidth', HEAD_WIDTH_SHINE.toString()); 
+  shineBlackMarker.setAttribute('markerHeight', HEAD_HEIGHT_SHINE.toString());
+  shineBlackMarker.setAttribute('refX', HEAD_REF_X_SHINE.toString());
+  shineBlackMarker.setAttribute('refY', (HEAD_HEIGHT_SHINE / 2).toString());
+  
+  const shineBlackPath = document.createElementNS(NS, 'path');
+  shineBlackPath.setAttribute('d', `M0,0 L0,${HEAD_HEIGHT_SHINE} L${HEAD_WIDTH_SHINE},${HEAD_HEIGHT_SHINE/2} Z`);
+  shineBlackPath.setAttribute('fill', 'black'); 
+  shineBlackMarker.appendChild(shineBlackPath);
+  defs.appendChild(shineBlackMarker);
 
   const hidden = document.createElementNS(NS, 'marker');
   hidden.setAttribute('id', 'arrowhead-hidden');
@@ -277,18 +387,42 @@ function addArrowHeadDefs() {
   svg.appendChild(defs);
 }
 
-// ────────────────────────────────────────────────
-// Analysis style helper (border only, no icon inside bubble)
 function getAnalysisStyle(analysis) {
   switch (analysis) {
-    case 'best':
-      return { borderColor: '#2196f3', title: 'Best move' };     // blue
-    case 'good':
-      return { borderColor: '#4caf50', title: 'Good move' };     // green
-    case 'bad':
-      return { borderColor: '#f44336', title: 'Bad move' };      // red
-    default:
-      return { borderColor: '#9e9e9e', title: 'Unknown' };       // gray
+    case 'best': return { borderColor: '#2196f3', title: 'Best move' };
+    case 'good': return { borderColor: '#4caf50', title: 'Good move' };
+    case 'bad':  return { borderColor: '#f44336', title: 'Bad move' };
+    default:     return { borderColor: '#9e9e9e', title: 'Unknown' };
+  }
+}
+
+// ────────────────────────────────────────────────
+// Overlap Detection
+// ────────────────────────────────────────────────
+
+function checkOverlaps() {
+  renderedArrows.forEach(arrow => {
+    if (arrow.ringGroup) arrow.ringGroup.style.opacity = '1';
+    arrow.isOverlapped = false;
+  });
+
+  for (let i = renderedArrows.length - 1; i >= 0; i--) {
+    const topArrow = renderedArrows[i];
+    for (let j = i - 1; j >= 0; j--) {
+      const bottomArrow = renderedArrows[j];
+      const dx = topArrow.ringCoords.x - bottomArrow.ringCoords.x;
+      const dy = topArrow.ringCoords.y - bottomArrow.ringCoords.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+
+      const radius = topArrow.isVariation ? RADIUS_VAR * 2.2 : RADIUS_MAIN * 2.2;
+      
+      if (dist < radius) { 
+        bottomArrow.isOverlapped = true;
+        if (bottomArrow.ringGroup) {
+          bottomArrow.ringGroup.style.opacity = '0'; 
+        }
+      }
+    }
   }
 }
 
@@ -296,7 +430,7 @@ function getAnalysisStyle(analysis) {
 // Arrow Rendering
 // ────────────────────────────────────────────────
 
-function createArrow(from, to, number, color, isCounted, variationID, analysis = 'unknown') {
+function createArrow(from, to, number, color, isCounted, variationID, analysis = 'unknown', labelText = null) {
   const svgEl = ensureSvg();
   if (!svgEl) return null;
 
@@ -314,19 +448,35 @@ function createArrow(from, to, number, color, isCounted, variationID, analysis =
   const markerId = ARROWHEAD_MAP[color] || 'arrowhead-hidden';
   const markerUrl = `url(#${markerId})`;
 
+  // --- VARIATION LOGIC ---
+  const isVariation = variationID > 0;
+  const activeStroke = isVariation ? STROKE_WIDTH_VAR : STROKE_WIDTH_MAIN;
+  const activeShineWidth = isVariation ? STROKE_WIDTH_SHINE_VAR : STROKE_WIDTH_SHINE;
+  const activeRadius = RADIUS_MAIN; 
+
+  // Wrapper Group
+  const arrowWrapper = document.createElementNS(NS, 'g');
+  arrowWrapper.classList.add('arrow-wrapper');
+  arrowWrapper.style.pointerEvents = 'auto'; 
+  
+  // 1. Line
   const line = document.createElementNS(NS, 'line');
   line.setAttribute('x1', x1);
   line.setAttribute('y1', y1);
   line.setAttribute('x2', x2);
   line.setAttribute('y2', y2);
   line.setAttribute('stroke', color);
-  line.setAttribute('stroke-width', '0.16');
-  line.setAttribute('stroke-opacity', '0');
-  line.setAttribute('marker-end', 'url(#arrowhead-hidden)');
+  line.setAttribute('stroke-width', activeStroke); 
+  line.setAttribute('stroke-opacity', '1');
+  line.setAttribute('stroke-linecap', 'round');
+  line.setAttribute('marker-end', markerUrl);
+  arrowWrapper.appendChild(line);
 
-  const g = document.createElementNS(NS, 'g');
-  g.style.pointerEvents = 'auto';
-  g.style.cursor = 'pointer';
+  // 2. Ring Group
+  const ringGroup = document.createElementNS(NS, 'g');
+  ringGroup.style.cursor = 'pointer';
+  ringGroup.style.pointerEvents = 'auto'; 
+  ringGroup.style.transition = 'opacity 0.2s'; 
 
   const tagLine = document.createElementNS(NS, 'line');
   tagLine.setAttribute('x1', cx);
@@ -335,113 +485,169 @@ function createArrow(from, to, number, color, isCounted, variationID, analysis =
   tagLine.setAttribute('y2', ny);
   tagLine.setAttribute('stroke', 'white');
   tagLine.setAttribute('stroke-width', '0.05');
-  g.appendChild(tagLine);
+  ringGroup.appendChild(tagLine);
 
   const circle = document.createElementNS(NS, 'circle');
   circle.setAttribute('cx', nx);
   circle.setAttribute('cy', ny);
-  circle.setAttribute('r', '0.25');
+  circle.setAttribute('r', activeRadius.toString());
   circle.setAttribute('fill', color);
   circle.setAttribute('stroke', 'white');
   circle.setAttribute('stroke-width', '0.03');
-  g.appendChild(circle);
+  ringGroup.appendChild(circle);
 
-  // ─── Analysis visualization: colored border only ───
   const analysisStyle = getAnalysisStyle(analysis);
-
-  // Colored border around bubble (thicker for visibility)
   circle.setAttribute('stroke', analysisStyle.borderColor);
   circle.setAttribute('stroke-width', '0.08');
+  ringGroup.setAttribute('title', analysisStyle.title);
 
-  // Hover tooltip with full description
-  g.setAttribute('title', analysisStyle.title);
-
+  // 3. TEXT RENDERING
   const text = document.createElementNS(NS, 'text');
   text.setAttribute('x', nx);
   text.setAttribute('y', ny + 0.015);
   text.setAttribute('fill', 'white');
-  text.setAttribute('font-size', '0.28');
   text.setAttribute('text-anchor', 'middle');
   text.setAttribute('dominant-baseline', 'middle');
-  text.textContent = number;
-  g.appendChild(text);
+
+  if (isVariation) {
+      const tsMove = document.createElementNS(NS, 'tspan');
+      tsMove.textContent = number;
+      tsMove.setAttribute('font-size', '0.20'); 
+
+      const tsVar = document.createElementNS(NS, 'tspan');
+      tsVar.textContent = variationID; 
+      tsVar.setAttribute('font-size', '0.10'); 
+      tsVar.setAttribute('dy', '0.06');
+      
+      text.appendChild(tsMove);
+      text.appendChild(tsVar);
+  } else {
+      text.setAttribute('font-size', '0.28');
+      text.textContent = labelText ? labelText : number;
+  }
+  ringGroup.appendChild(text);
+
+  arrowWrapper.appendChild(ringGroup);
+
+  // ────────────────────────────────────────────────────────
+  // SHINE ELEMENT
+  // ────────────────────────────────────────────────────────
+  const shine = line.cloneNode(true);
+  
+  // Base setup: Main lines white, Variations black
+  if (isVariation) {
+      shine.setAttribute('stroke', 'black');
+      shine.setAttribute('marker-end', 'url(#arrowhead-shine-black)');
+  } else {
+      shine.setAttribute('stroke', 'white');
+      shine.setAttribute('marker-end', 'url(#arrowhead-shine)');
+  }
+  
+  shine.setAttribute('stroke-width', activeShineWidth);
+  shine.style.opacity = '0'; 
+  shine.style.pointerEvents = 'none'; 
+  shine.style.transition = 'opacity 0.2s'; 
+  arrowWrapper.insertBefore(shine, line);
 
   const arrowElements = {
     line,
-    g,
+    ringGroup,
+    arrowWrapper,
+    shine, 
     number,
     color,
     markerUrl,
     isCounted,
     variationID,
+    isVariation,
     from,
     to,
-    analysis
+    analysis,
+    labelText, 
+    ringCoords: { x: nx, y: ny },
+    isOverlapped: false
   };
 
-  g.addEventListener('mouseenter', () => {
-    if (!isCounted) {
-      showArrow(arrowElements, COLOR_ROSE, 'url(#arrowhead-rose)');
-    } else {
-      showArrow(arrowElements, color, markerUrl);
-    }
-  });
+  // --- HOVER LOGIC ---
 
-  g.addEventListener('mouseleave', () => {
-    const isH = isHighlightActive && highlightBuffer === arrowElements.number.toString();
-    const isG = isVariationHighlightActive && variationHighlightBuffer &&
-                arrowElements.variationID === parseInt(variationHighlightBuffer);
+  const onArrowEnter = () => {
+    if (arrowWrapper.nextSibling) {
+      arrowWrapper.parentNode.appendChild(arrowWrapper);
+    }
+    ringGroup.style.opacity = '1';
+    
+    // Variation hover: Link line becomes BLACK
+    if (isVariation) tagLine.setAttribute('stroke', 'black');
+  };
+
+  const onRingEnter = (e) => {
+    e.stopPropagation();
+    shine.style.opacity = '0.8';
+    
+    // Variation hover: Link line becomes BLACK
+    if (isVariation) tagLine.setAttribute('stroke', 'black');
+  };
+
+  const onRingLeave = () => {
+    shine.style.opacity = '0';
+    
+    // Variation leave: Link line reverts to WHITE
+    if (isVariation) tagLine.setAttribute('stroke', 'white');
+  };
+
+  const onArrowLeave = () => {
+    shine.style.opacity = '0';
+    
+    if (isVariation) tagLine.setAttribute('stroke', 'white');
+
+    if (arrowWrapper.parentNode) {
+      arrowWrapper.parentNode.prepend(arrowWrapper);
+    }
+
+    if (arrowElements.isOverlapped) {
+      ringGroup.style.opacity = '0';
+    }
+
     const isT = toggledHighlight.number === arrowElements.number.toString() &&
                 toggledHighlight.color === arrowElements.color;
 
-    if (isH) showArrow(arrowElements, COLOR_PINK, 'url(#arrowhead-pink)');
-    else if (isG) showArrow(arrowElements, COLOR_ROSE, 'url(#arrowhead-rose)');
-    else if (isT) showArrow(arrowElements, color, markerUrl);
-    else hideArrow(arrowElements);
-  });
+    if (isT) showArrow(arrowElements, color, markerUrl);
+    else showArrow(arrowElements, color, markerUrl);
+  };
 
-  g.addEventListener('click', async e => {
+  arrowWrapper.addEventListener('mouseenter', onArrowEnter);
+  arrowWrapper.addEventListener('mouseleave', onArrowLeave);
+  
+  ringGroup.addEventListener('mouseenter', onRingEnter);
+  ringGroup.addEventListener('mouseleave', onRingLeave);
+
+  // Click Handler
+  arrowWrapper.addEventListener('click', async e => {
     e.preventDefault();
     e.stopPropagation();
 
-    const { number, color, from, to, variationID, isCounted } = arrowElements;
-
-    // Shift + click → delete this specific arrow
     if (e.shiftKey) {
       const currentState = [...(historyLog[currentHistoryIndex] || [])];
       const indexToRemove = currentState.findIndex(a =>
-        a.from === from &&
-        a.to === to &&
-        a.number === number &&
-        a.color === color &&
-        a.variationID === variationID &&
-        a.isCounted === isCounted
+        a.from === from && a.to === to && a.number === number
       );
 
       if (indexToRemove !== -1) {
         currentState.splice(indexToRemove, 1);
         recordNewAction(currentState);
-
+        
         const trackIndex = currentArrowsOnBoard.findIndex(a =>
           a.from === from && a.to === to && a.number === number
         );
         if (trackIndex !== -1) currentArrowsOnBoard.splice(trackIndex, 1);
 
-        g.style.transition = 'opacity 0.4s';
-        g.style.opacity = '0.15';
-        setTimeout(() => {
-          line.remove();
-          g.remove();
-        }, 450);
+        arrowWrapper.style.opacity = '0';
+        setTimeout(() => arrowWrapper.remove(), 300);
       }
-
       return;
     }
 
-    // Normal toggle behavior
     clearToggledHighlight();
-    clearHHighlight();
-    clearGHighlight();
 
     const already = toggledHighlight.number === number.toString() &&
                     toggledHighlight.color === color;
@@ -452,27 +658,33 @@ function createArrow(from, to, number, color, isCounted, variationID, analysis =
     }
   });
 
-  svgEl.appendChild(line);
-  svgEl.appendChild(g);
-
+  svgEl.appendChild(arrowWrapper);
   return arrowElements;
 }
 
 function showArrow(el, color, marker) {
   el.line.setAttribute('stroke', color);
   el.line.setAttribute('stroke-opacity', '1');
-  el.line.setAttribute('stroke-width', '0.16');
   el.line.setAttribute('marker-end', marker);
+  if (el.ringGroup) el.ringGroup.style.display = 'block';
 }
 
 function hideArrow(el) {
-  const isH = isHighlightActive && highlightBuffer === el.number.toString();
+  // G+Number check
   const isG = isVariationHighlightActive && variationHighlightBuffer &&
               el.variationID === parseInt(variationHighlightBuffer);
+  
+  // H+Number check
+  const isH = isHighlightActive && highlightBuffer &&
+              el.number.toString() === highlightBuffer;
+
   const isT = toggledHighlight.number === el.number.toString() &&
               toggledHighlight.color === el.color;
 
-  if (!isH && !isG && !isT) {
+  // G=0 (Main Line)
+  const isGZero = isVariationHighlightActive && variationHighlightBuffer === "0" && !el.isVariation;
+
+  if (!isG && !isT && !isH && !isGZero) {
     el.line.setAttribute('stroke-opacity', '0');
     el.line.setAttribute('marker-end', 'url(#arrowhead-hidden)');
   }
@@ -490,21 +702,54 @@ function redrawAllArrows() {
   clearSvg();
   const state = historyLog[currentHistoryIndex] || [];
   state.forEach(a => {
-    const el = createArrow(a.from, a.to, a.number, a.color, a.isCounted, a.variationID, a.analysis);
+    const el = createArrow(a.from, a.to, a.number, a.color, a.isCounted, a.variationID, a.analysis, a.labelText);
     if (el) renderedArrows.push(el);
   });
+  checkOverlaps();
   showAllArrowsInCurrentState();
 }
 
 function showAllArrowsInCurrentState() {
   renderedArrows.forEach(el => {
-    const isH = isHighlightActive && highlightBuffer === el.number.toString();
     const isG = isVariationHighlightActive && variationHighlightBuffer &&
                 el.variationID === parseInt(variationHighlightBuffer);
+                
+    const isH = isHighlightActive && highlightBuffer &&
+                el.number.toString() === highlightBuffer;
+    
+    // G+0 Logic: Highlight Main Lines
+    const isGZero = isVariationHighlightActive && variationHighlightBuffer === "0" && !el.isVariation;
 
-    if (isH) showArrow(el, COLOR_PINK, 'url(#arrowhead-pink)');
-    else if (isG) showArrow(el, COLOR_ROSE, 'url(#arrowhead-rose)');
-    else showArrow(el, el.color, el.markerUrl);
+    // CASE 1: Variation + Highlighted (G or H) -> Original Color + BLACK SHINE
+    if ((isG || isH) && el.isVariation) {
+        showArrow(el, el.color, el.markerUrl);
+        // Force Black Shine and Black Tagline
+        el.shine.setAttribute('stroke', 'black');
+        el.shine.setAttribute('marker-end', 'url(#arrowhead-shine-black)');
+        el.shine.style.opacity = '0.8';
+        
+        // Find tagline in the ringGroup (first child usually)
+        const tag = el.ringGroup.querySelector('line');
+        if(tag) tag.setAttribute('stroke', 'black');
+
+        if (el.arrowWrapper.parentNode) el.arrowWrapper.parentNode.appendChild(el.arrowWrapper);
+    }
+    // CASE 2: Main Line + Highlighted (H or G=0) -> Original Color + WHITE SHINE
+    else if ((isH || isGZero) && !el.isVariation) {
+        showArrow(el, el.color, el.markerUrl); 
+        el.shine.setAttribute('stroke', 'white');
+        el.shine.setAttribute('marker-end', 'url(#arrowhead-shine)');
+        el.shine.style.opacity = '0.8'; 
+        if (el.arrowWrapper.parentNode) el.arrowWrapper.parentNode.appendChild(el.arrowWrapper);
+    }
+    // Default (No Highlight)
+    else {
+        showArrow(el, el.color, el.markerUrl);
+        el.shine.style.opacity = '0'; 
+        // Reset Tagline to white just in case
+        const tag = el.ringGroup.querySelector('line');
+        if(tag) tag.setAttribute('stroke', 'white');
+    }
   });
 }
 
@@ -518,7 +763,6 @@ function recordNewAction(newState) {
 // ────────────────────────────────────────────────
 // Undo / Redo
 // ────────────────────────────────────────────────
-
 function undoMove() {
   if (currentHistoryIndex <= 0) return;
   currentHistoryIndex--;
@@ -532,9 +776,8 @@ function redoMove() {
 }
 
 // ────────────────────────────────────────────────
-// Drawing + deletion logic
+// Drawing Logic
 // ────────────────────────────────────────────────
-
 let isDrawing = false;
 let previewLine = null;
 let startSquare = null;
@@ -558,6 +801,8 @@ function initDrawArrows() {
 
     const svgEl = ensureSvg();
     if (svgEl) {
+      const strokeWidth = isWKeyPressed ? STROKE_WIDTH_VAR : STROKE_WIDTH_MAIN;
+
       previewLine = document.createElementNS(NS, 'line');
       const xy = keyToXY(startSquare);
       previewLine.setAttribute('x1', xy.x);
@@ -565,7 +810,7 @@ function initDrawArrows() {
       previewLine.setAttribute('x2', xy.x);
       previewLine.setAttribute('y2', xy.y);
       previewLine.setAttribute('stroke', '#888');
-      previewLine.setAttribute('stroke-width', '0.16');
+      previewLine.setAttribute('stroke-width', strokeWidth);
       previewLine.setAttribute('stroke-dasharray', '0.25,0.12');
       previewLine.setAttribute('opacity', '0.7');
       svgEl.appendChild(previewLine);
@@ -603,6 +848,7 @@ function initDrawArrows() {
       return;
     }
 
+    // DRAW-TO-DELETE LOGIC
     const currentState = historyLog[currentHistoryIndex] || [];
     const nextState = [...currentState];
 
@@ -614,18 +860,67 @@ function initDrawArrows() {
     else if (e.altKey) arrowColor = COLOR_ALT;
     else if (e.ctrlKey) arrowColor = COLOR_CTRL;
 
-    let lastCountedNumber = 0;
-    let countedCount = 0;
-    currentState.forEach(m => {
-      if (m.isCounted) {
-        countedCount++;
-        lastCountedNumber = m.number;
+    const existingIndex = nextState.findIndex(a => 
+      a.from === startSquare && a.to === endSquare
+    );
+
+    if (existingIndex !== -1) {
+      const existing = nextState[existingIndex];
+      nextState.splice(existingIndex, 1);
+      
+      const trackIdx = currentArrowsOnBoard.findIndex(a => 
+        a.from === startSquare && a.to === endSquare
+      );
+      if (trackIdx !== -1) currentArrowsOnBoard.splice(trackIdx, 1);
+
+      if (existing.color === arrowColor) {
+        recordNewAction(nextState);
+        startSquare = null;
+        return;
+      }
+    }
+
+    // ──────────────────────────────────────────────
+    // CONTINUOUS PLY LOGIC (1W -> 1B -> 2 -> 2 -> 3)
+    // ──────────────────────────────────────────────
+    
+    // 1. Calculate arrows ALREADY on the board (Main Lines)
+    let existingArrowsCount = 0;
+    nextState.forEach(m => {
+      if (m.isCounted && !m.isVariation) {
+        existingArrowsCount++;
       }
     });
 
-    const numberToDisplay = isCounted
-      ? Math.ceil((countedCount + 1) / 2)
-      : (lastCountedNumber || 1);
+    // 2. Handle B-Key Start (If this is the very first arrow)
+    if (existingArrowsCount === 0 && globalPlyCount === 0 && isBKeyPressed) {
+        currentBoardStartedWithB = true; 
+    }
+
+    const offset = currentBoardStartedWithB ? 1 : 0;
+
+    // 3. Absolute Ply Index
+    let totalMainArrowsSoFar = globalPlyCount + offset + existingArrowsCount;
+    if (isCounted) {
+        totalMainArrowsSoFar += 1;
+    } else {
+        if (totalMainArrowsSoFar === 0) totalMainArrowsSoFar = 1;
+    }
+
+    // 4. Move Number
+    const numberToDisplay = Math.ceil(totalMainArrowsSoFar / 2);
+
+    // 5. Label Logic
+    let labelText = null;
+    if (isCounted && !isWKeyPressed) {
+        if (numberToDisplay === 1) {
+             if (totalMainArrowsSoFar === 1) labelText = "1W";
+             else if (totalMainArrowsSoFar === 2) {
+                 if (currentBoardStartedWithB) labelText = "1B";
+                 else labelText = "1";
+             }
+        }
+    }
 
     const newArrow = {
       from: startSquare,
@@ -634,7 +929,8 @@ function initDrawArrows() {
       number: numberToDisplay,
       isCounted,
       variationID: isWKeyPressed ? currentVariationID : 0,
-      analysis: 'unknown'
+      analysis: 'unknown',
+      labelText: labelText 
     };
 
     newArrow.analysis = await analyzeArrow(newArrow.from, newArrow.to);
@@ -659,22 +955,19 @@ function initDrawArrows() {
     startSquare = null;
   });
 
-  // ─── LEFT CLICK on empty board area → DELETE ALL ARROWS ───
   board.addEventListener('click', e => {
     if (e.button !== 0) return;
     if (e.target.closest('g')) return;
+    if (e.target.tagName === 'line' && e.target.parentElement.classList.contains('checkm8-arrows')) return;
 
     if (historyLog[currentHistoryIndex]?.length > 0) {
       historyLog = [[]];
       currentHistoryIndex = 0;
       currentArrowsOnBoard = [];
       clearSvg();
-
-      console.log("All arrows cleared by board click");
     }
   });
 
-  // Keyboard handlers
   window.addEventListener('keydown', e => {
     if (e.repeat) return;
     const key = e.key.toLowerCase();
@@ -683,45 +976,47 @@ function initDrawArrows() {
     if (isUndoRedo && key === 'z') { e.preventDefault(); undoMove(); return; }
     if (isUndoRedo && key === 'y') { e.preventDefault(); redoMove(); return; }
 
+    // H Logic
     if (key === 'h' && !isUndoRedo) {
       e.preventDefault();
-      clearToggledHighlight();
-      clearGHighlight();
       isHighlightActive = true;
-      highlightBuffer = "";
+      highlightBuffer = ""; 
       return;
     }
 
+    // G Logic
     if (key === 'g' && !isUndoRedo) {
       e.preventDefault();
       clearToggledHighlight();
-      clearHHighlight();
       isVariationHighlightActive = true;
       variationHighlightBuffer = "";
       return;
     }
 
+    // B Logic (for 1B)
+    if (key === 'b' && !isUndoRedo) {
+        isBKeyPressed = true;
+    }
+
     const num = parseInt(e.key);
     if (!isNaN(num) && num >= 0 && num <= 9) {
+      
+      // H + Number
       if (isHighlightActive) {
         e.preventDefault();
-        const old = highlightBuffer;
         highlightBuffer += e.key;
-        if (old) renderedArrows.filter(a => a.number.toString() === old).forEach(hideArrow);
-        renderedArrows.filter(a => a.number.toString() === highlightBuffer)
-          .forEach(el => showArrow(el, COLOR_PINK, 'url(#arrowhead-pink)'));
+        showAllArrowsInCurrentState();
         return;
       }
+      
+      // G + Number
       if (isVariationHighlightActive) {
         e.preventDefault();
-        const old = variationHighlightBuffer;
         variationHighlightBuffer += e.key;
-        const oldId = parseInt(old);
-        if (!isNaN(oldId)) renderedArrows.filter(a => a.variationID === oldId).forEach(hideArrow);
-        renderedArrows.filter(a => a.variationID === parseInt(variationHighlightBuffer))
-          .forEach(el => showArrow(el, COLOR_ROSE, 'url(#arrowhead-rose)'));
+        showAllArrowsInCurrentState(); 
         return;
       }
+      
       if (isWKeyPressed) {
         e.preventDefault();
         currentVariationID = num;
@@ -735,19 +1030,35 @@ function initDrawArrows() {
 
   window.addEventListener('keyup', e => {
     const key = e.key.toLowerCase();
+    
+    // H Release
+    if (key === 'h') { 
+        e.preventDefault(); 
+        isHighlightActive = false;
+        highlightBuffer = "";
+        showAllArrowsInCurrentState();
+    }
+
+    // G Release
+    if (key === 'g') { 
+      e.preventDefault(); 
+      isVariationHighlightActive = false;
+      variationHighlightBuffer = "";
+      showAllArrowsInCurrentState();
+    }
+
     if (key === 'w') isWKeyPressed = false;
-    if (key === 'h') { e.preventDefault(); clearHHighlight(); }
-    if (key === 'g') { e.preventDefault(); clearGHighlight(); }
+    if (key === 'b') isBKeyPressed = false;
   });
 }
 
-// Board position change detection
+// ────────────────────────────────────────────────
+// Initialization
+// ────────────────────────────────────────────────
 let lastKnownFen = null;
-
 setInterval(async () => {
   const currentFen = await getCurrentFEN();
   if (lastKnownFen && currentFen !== lastKnownFen && currentArrowsOnBoard.length > 0) {
-    console.log("Board position changed → resetting arrows");
     currentArrowsOnBoard = [];
     historyLog = [[]];
     currentHistoryIndex = 0;
@@ -756,83 +1067,47 @@ setInterval(async () => {
   lastKnownFen = currentFen;
 }, 2200);
 
-// ─── Improved: Listen for board load message with retry until board exists ───
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "LOAD_BOARD" && msg.boardId) {
-    // Wait until board element exists before loading
     const tryLoad = (attempt = 0) => {
       if (getBoard()) {
         loadSavedBoard(msg.boardId);
         sendResponse({ status: "loaded" });
       } else if (attempt < 10) {
-        // Retry every 500ms, up to ~5 seconds
         setTimeout(() => tryLoad(attempt + 1), 500);
       } else {
-        console.error("Board element not found after retries");
         sendResponse({ status: "board_not_ready" });
       }
     };
-
     tryLoad();
-    return true; // Keep message channel open for async response
+    return true;
   }
 });
 
-// ─── Function to load arrows for a saved board ───
 async function loadSavedBoard(boardId) {
   const user = await getLoggedInUser();
-  if (!user) {
-    console.error("[loadSavedBoard] No logged-in user found");
-    return;
-  }
-
-  console.log(`[loadSavedBoard] Starting for user=${user}, boardId=${boardId}`);
+  if (!user) return;
 
   try {
-    // Use proxy instead of direct fetch (consistent with save)
     const arrows = await proxyApiCall(
       `get-arrows/${encodeURIComponent(user)}?boardId=${boardId}`,
       "GET"
     );
 
-    console.log(`[loadSavedBoard] API returned ${arrows?.length || 0} arrows`);
+    if (!Array.isArray(arrows) || arrows.length === 0) return;
 
-    if (!Array.isArray(arrows) || arrows.length === 0) {
-      console.warn("[loadSavedBoard] No arrows returned from server");
-      return;
-    }
-
-    // Clear current state
     historyLog = [arrows];
     currentHistoryIndex = 0;
-    currentArrowsOnBoard = arrows.map(a => ({
-      ...a,
-      analysis: a.analysis || 'unknown'
-    }));
+    currentArrowsOnBoard = arrows.map(a => ({ ...a, analysis: a.analysis || 'unknown' }));
 
-    console.log(`[loadSavedBoard] Set state with ${currentArrowsOnBoard.length} arrows`);
-
-    // Ensure SVG layer exists
-    const svgReady = ensureSvg();
-    if (!svgReady) {
-      console.error("[loadSavedBoard] SVG layer could not be created");
-      return;
+    if (ensureSvg()) {
+      redrawAllArrows();
     }
-
-    // Force redraw
-    redrawAllArrows();
-
-    // Final check after redraw
-    setTimeout(() => {
-      console.log(`[loadSavedBoard] After redraw: ${renderedArrows.length} rendered arrows in SVG`);
-    }, 1500);
-
   } catch (err) {
     console.error("[loadSavedBoard] Failed:", err.message);
   }
 }
 
-// Start
 const observer = new MutationObserver(() => {
   if (getBoard() && !svg) {
     chrome.storage.sync.get(["loggedInUser"], res => {
