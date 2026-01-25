@@ -1,3 +1,4 @@
+// routes/boards.js
 import express from "express";
 import Board from "../models/Board.js";
 
@@ -6,25 +7,41 @@ const router = express.Router();
 router.post("/save-board", async (req, res) => {
   const { user, boardId, fen } = req.body;
 
-  if (!user || !boardId || !fen) return res.status(400).json({ error: "Missing required fields" });
+  if (!user || !boardId || !fen) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
 
   try {
-    const newBoard = new Board({
-      user,
-      boardId,
-      fen,
-      createdAt: new Date(),
-    });
+    
+    const board = await Board.findOneAndUpdate(
+      { user, boardId },                          
+      {
+        fen,
+        updatedAt: new Date(),                    
+      },
+      {
+        upsert: true,                            
+        new: true,                                
+        setDefaultsOnInsert: true                 
+      }
+    );
 
-    await newBoard.save();
+    console.log(
+      `Board ${boardId} ${board.isNew ? "created" : "updated"} for user ${user}`
+    );
 
-    res.status(201).json({
+    res.status(200).json({
       message: "Board saved successfully",
-      board: newBoard,
+      board,
     });
   } catch (err) {
     console.error("Save board error:", err);
-    res.status(500).json({ error: "Server error" });
+
+    if (err.code === 11000) {
+      return res.status(409).json({ error: "Duplicate boardId detected" });
+    }
+
+    res.status(500).json({ error: "Server error while saving board" });
   }
 });
 
@@ -39,5 +56,6 @@ router.get("/get-boards/:user", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 export default router;
