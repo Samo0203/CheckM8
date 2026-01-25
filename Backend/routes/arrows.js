@@ -50,4 +50,22 @@ router.get("/get-arrows/:user", async (req, res) => {
   }
 });
 
+
+// NEW: Get repeat counts for arrows (from/to) across user's boards
+router.get("/arrow-repeats/:user", async (req, res) => {
+  const { user } = req.params;
+
+  try {
+    const repeats = await Arrow.aggregate([
+      { $match: { user } },
+      { $group: { _id: { from: "$from", to: "$to" }, count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+    res.json(repeats);
+  } catch (err) {
+    console.error("Arrow repeats error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 export default router;
