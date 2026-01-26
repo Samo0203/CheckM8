@@ -1,4 +1,4 @@
-console.log("Lichess Arrow Navigator: Phase 53 (File Save/Upload System)");
+console.log("Lichess Arrow Navigator: Phase 55 (Position Repeats - Next Moves Stats)");
 
 // ==========================================
 // 0. AUTH & API HELPERS
@@ -17,25 +17,25 @@ function getLoggedInUser() {
     });
 }
 
-async function proxyApiCall(endpoint, method, payload) {
+async function proxyApiCall(endpoint, method, body) {
     return new Promise((resolve, reject) => {
-        if (typeof chrome !== 'undefined' && chrome.runtime) {
-            chrome.runtime.sendMessage({
-                action: "proxyApiCall",
-                endpoint,
-                method,
-                payload
-            }, response => {
-                if (chrome.runtime.lastError) {
-                    console.error(chrome.runtime.lastError);
-                    reject(chrome.runtime.lastError);
-                } else {
-                    resolve(response);
-                }
-            });
-        } else {
-            resolve({ success: true });
-        }
+        chrome.runtime.sendMessage({
+            type: "PROXY_API_CALL",
+            endpoint,
+            method,
+            body
+        }, response => {
+            if (chrome.runtime.lastError) {
+                console.error("Runtime error:", chrome.runtime.lastError.message);
+                reject(new Error(chrome.runtime.lastError.message));
+                return;
+            }
+            if (response?.success) {
+                resolve(response.data || response);
+            } else {
+                reject(new Error(response?.error || "Proxy call failed"));
+            }
+        });
     });
 }
 
@@ -43,22 +43,59 @@ async function saveArrow(arrowData) {
     const user = await getLoggedInUser();
     if (!user) {
         console.log("User not logged in. Move added locally only.");
-        return; 
+        return;
     }
-    try {
-        await proxyApiCall("save-arrow", "POST", {
-            from: arrowData.from,
-            to: arrowData.to,
-            color: arrowData.color,
-            number: arrowData.number,
-            user: user,
-            boardId: window.location.pathname.split('/').pop(),
-            fen: arrowData.fen
-        });
-        console.log("Arrow saved to backend.");
+
+    const payload = {
+        from: arrowData.from,
+        to: arrowData.to,
+        color: arrowData.color || "green",
+        number: arrowData.number,
+        user: user,
+        boardId: window.location.pathname.split('/').pop() || "default-board",
+        variationID: 0,
+        analysis: "unknown"
+    };
+
+    console.log("Sending arrow payload:", payload);
+
+        try {
+        const response = await proxyApiCall("save-arrow", "POST", payload);
+        console.log("Arrow saved successfully:", response);
     } catch (err) {
         console.error("Failed to save arrow:", err);
+        if (err.message.includes("400")) {
+            // Log full error for debugging
+            console.log("400 details – check Network tab for response body");
+            alert("Save arrow failed (400) – likely missing variationID or analysis. Check console.");
+        }
     }
+}
+
+// Add this right after proxyApiCall() and saveArrow()
+
+async function loadRepeatCounts() {
+    const user = await getLoggedInUser();
+    if (!user) return;
+
+    const res = await proxyApiCall(`get-all-move-counts/${user}`, "GET");
+    if (!res?.success || !res.data) return;
+
+    positionMoveCounts.clear();
+    res.data.forEach(entry => {
+        const key = entry.fen;
+        if (!positionMoveCounts.has(key)) {
+            positionMoveCounts.set(key, new Map());
+        }
+        const moveKey = entry.from + entry.to;
+        positionMoveCounts.get(key).set(moveKey, entry.count);
+    });
+}
+
+function getMoveRepeatCount(fen, from, to) {
+    const moves = positionMoveCounts.get(fen);
+    if (!moves) return 0;
+    return moves.get(from + to) || 0;
 }
 
 // ==========================================
@@ -71,6 +108,7 @@ class MoveNode {
         this.children = [];
         this.moveData = moveData; 
         this.customColor = color;
+        this.count = 0;
         
         if (parent) {
             const preMoveState = parent.boardState;
@@ -102,6 +140,12 @@ let moveIdCounter = 0;
 const MOVES_PER_SCREEN = 8; 
 let initialBoardState = {}; 
 let isBoardScanned = false;
+
+// Repeat count cache: fen → move (from-to) → count
+let positionMoveCounts = new Map();
+
+// Stats for current position only
+let currentPositionStats = null; // { totalReaches: N, nextMoves: [{from,to,count,isPossible,mainlineCount}] }
 
 // ==========================================
 // 2. STATE ENGINE HELPERS
@@ -196,8 +240,146 @@ function scanFullBoard() {
     return state;
 }
 
+function getCurrentFEN(node) {
+    const pieces = node.boardState || {};
+    const ranks = Array(8).fill(null).map(() => Array(8).fill(''));
+    
+    Object.entries(pieces).forEach(([sq, code]) => {
+        const file = 'abcdefgh'.indexOf(sq[0]);
+        const rank = 8 - parseInt(sq[1]);
+        ranks[rank][file] = code;
+    });
+    
+    let fen = '';
+    for (let r = 0; r < 8; r++) {
+        let empty = 0;
+        for (let f = 0; f < 8; f++) {
+            if (ranks[r][f]) {
+                fen += empty ? empty : '';
+                fen += ranks[r][f].toLowerCase();
+                empty = 0;
+            } else {
+                empty++;
+            }
+        }
+        fen += empty ? empty : '';
+        if (r < 7) fen += '/';
+    }
+    return fen + ' w - - 0 1';
+}
+
+function assignRepeatCountsToTree(node = rootNode, fen = getCurrentFEN(rootNode)) {
+    node.children.forEach(child => {
+        child.count = getMoveRepeatCount(fen, child.moveData.from, child.moveData.to);
+        const nextFen = getCurrentFEN(child);
+        assignRepeatCountsToTree(child, nextFen);
+    });
+}
+
 // ==========================================
-// 3. UI SETUP
+// 3. POSITION REPEAT STATISTICS
+// ==========================================
+
+async function loadPositionStats(fen) {
+    const user = await getLoggedInUser();
+    if (!user) {
+        console.log("No user logged in – cannot load stats");
+        return null;
+    }
+
+    const encodedFen = encodeURIComponent(fen);
+    console.log("Loading stats for user:", user, "FEN:", fen, "Encoded:", encodedFen);
+
+    try {
+        const res = await proxyApiCall(`get-move-counts/${user}/${encodedFen}`, "GET");
+        console.log("get-move-counts raw response:", res);
+
+        // Handle both {success: true, data: [...]} and direct array [...]
+        let countsArray = res;
+        if (res && res.success && Array.isArray(res.data)) {
+            countsArray = res.data;
+        } else if (!Array.isArray(res)) {
+            console.log("Unexpected response format:", res);
+            return null;
+        }
+
+        if (countsArray.length === 0) {
+            console.log("No moves found for this position");
+            return {
+                totalReaches: 0,
+                nextMoves: []
+            };
+        }
+
+        const stats = {
+            totalReaches: 0,
+            nextMoves: []
+        };
+
+        countsArray.forEach(entry => {
+            stats.totalReaches += entry.count;
+            stats.nextMoves.push({
+                from: entry.from,
+                to: entry.to,
+                count: entry.count,
+                isPossible: true,
+                mainlineCount: 0
+            });
+        });
+
+        console.log("Parsed stats:", stats);
+        return stats;
+    } catch (err) {
+        console.error("Failed to load position stats:", err.message);
+        return null;
+    }
+}
+
+async function updateCurrentPositionStats() {
+    const fen = getCurrentFEN(currentState.currentNode);
+    currentPositionStats = await loadPositionStats(fen);
+    renderNotationPanel();
+}
+
+async function incrementMoveCount(fen, from, to) {
+    const user = await getLoggedInUser();
+    if (!user) return;
+
+    const payload = { user, fen, from, to };
+
+    try {
+        await proxyApiCall("increment-move-count", "POST", payload);
+    } catch (err) {
+        console.error("Failed to increment move count:", err);
+    }
+}
+
+async function savePosition() {
+    const user = await getLoggedInUser();
+    if (!user) {
+        alert("Please login first.");
+        return;
+    }
+
+    const fen = getCurrentFEN(currentState.currentNode);
+
+    async function saveTree(n = currentState.currentNode, currentFen = fen) {
+        for (const child of n.children) {
+            await incrementMoveCount(currentFen, child.moveData.from, child.moveData.to);
+            const nextFen = getCurrentFEN(child);
+            await saveTree(child, nextFen);
+        }
+    }
+
+    await saveTree();
+
+    await updateCurrentPositionStats();
+
+    alert("Position saved – statistics updated for current board position.");
+}
+
+// ==========================================
+// 4. UI SETUP
 // ==========================================
 let overlayElement = null;
 let svgCanvas = null;
@@ -273,6 +455,7 @@ function createFloatingOverlay() {
         <input type="text" id="nav-input" placeholder="Jump (e.g. 1.1, 2.1)">
         
         <div class="btn-row" style="margin-top:5px; border-top:1px solid #444; padding-top:5px;">
+            <button id="btn-save-position" class="project-btn">Save Position</button>
             <button id="btn-save-proj" class="project-btn">Save File</button>
             <button id="btn-load-proj" class="project-btn">Load File</button>
         </div>
@@ -288,7 +471,7 @@ function createFloatingOverlay() {
     controls.querySelector('#btn-screen-prev').addEventListener('click', prevScreen);
     controls.querySelector('#btn-screen-next').addEventListener('click', nextScreen);
     controls.querySelector('#btn-hint-toggle').addEventListener('click', toggleHintMode);
-    
+    controls.querySelector('#btn-save-position').addEventListener('click', savePosition);
     controls.querySelector('#btn-save-proj').addEventListener('click', saveProjectToFile);
     controls.querySelector('#btn-load-proj').addEventListener('click', loadProjectFromFile);
 
@@ -308,14 +491,14 @@ function createFloatingOverlay() {
                     <path d="M0,0 L4,2 L0,4 Z" fill="#bdc3c7" />
                 </marker>
             </defs>
-      <rect id="board-dimmer" class="board-blur" width="100%" height="100%" style="display:none;"></rect>
+            <rect id="board-dimmer" class="board-blur" width="100%" height="100%" style="display:none;"></rect>
             <g id="grid-layer" style="display:none;"></g> 
             <g id="ghost-layer" style="display:none;"></g> 
             <g id="arrows-layer"></g>
             <g id="links-layer"></g>
             <g id="rings-layer"></g>
             <g id="text-layer"></g>
- </svg>
+        </svg>
     `;
 
     overlayElement.appendChild(controls);
@@ -348,7 +531,7 @@ function updateOverlayPosition(board) {
 }
 
 // ==========================================
-// 4. NAVIGATION LOGIC
+// 5. NAVIGATION LOGIC
 // ==========================================
 
 function toggleHintMode() {
@@ -358,7 +541,7 @@ function toggleHintMode() {
     renderBoardVisuals();
 }
 
-function addMove(from, to, modifiers) {
+async function addMove(from, to, modifiers) {
     currentState.isCleanView = false;
     const existingIndex = currentState.currentNode.children.findIndex(
         child => child.moveData.from === from && child.moveData.to === to
@@ -373,16 +556,26 @@ function addMove(from, to, modifiers) {
         else if (modifiers.shift) color = 'red';
         
         const newNode = new MoveNode(`move_${moveIdCounter}`, currentState.currentNode, { from, to }, color);
+        
+        const fen = getCurrentFEN(currentState.currentNode);
+        newNode.count = getMoveRepeatCount(fen, from, to) + 1;
+
         currentState.currentNode.children.push(newNode);
         
         saveArrow({
             from: from,
             to: to,
             color: color || 'green',
-            number: moveIdCounter,
-            fen: JSON.stringify(newNode.boardState)
+            number: moveIdCounter
         });
+
+        try {
+            await incrementMoveCount(fen, from, to);
+        } catch (err) {
+            console.error("Failed to increment move count:", err);
+        }
     }
+    await updateCurrentPositionStats();
     renderBoardVisuals();
     renderNotationPanel();
 }
@@ -417,6 +610,7 @@ function stepBack() {
         currentState.currentNode = currentState.currentNode.parent;
         currentState.activeChild = null;
     }
+    updateCurrentPositionStats();
     renderBoardVisuals(); 
     renderNotationPanel();
 }
@@ -426,6 +620,7 @@ function stepForward() {
         currentState.currentNode = currentState.currentNode.children[0];
         currentState.activeChild = null;
     }
+    updateCurrentPositionStats();
     renderBoardVisuals();
     renderNotationPanel();
 }
@@ -443,6 +638,7 @@ function prevScreen() {
         }
         currentState.currentNode = temp;
     }
+    updateCurrentPositionStats();
     renderBoardVisuals();
     renderNotationPanel();
 }
@@ -455,6 +651,7 @@ function nextScreen() {
         limit--;
     }
     currentState.currentNode = temp;
+    updateCurrentPositionStats();
     renderBoardVisuals();
     renderNotationPanel();
 }
@@ -505,6 +702,7 @@ function handleNavigationInput(text) {
     }
     
     currentState.currentNode = tempNode;
+    updateCurrentPositionStats();
     renderBoardVisuals();
     renderNotationPanel();
 }
@@ -520,7 +718,7 @@ function getPathToCurrent() {
 }
 
 // ==========================================
-// 5. SERIALIZATION & FILE LOGIC (NEW)
+// 5. SERIALIZATION & FILE LOGIC
 // ==========================================
 
 function serializeTree(node) {
@@ -551,7 +749,6 @@ function rebuildTree(data, parentNode, targetId) {
     });
 }
 
-// MODIFIED: Save to File
 function saveProjectToFile() {
     const dataToSave = {
         tree: serializeTree(rootNode),
@@ -570,7 +767,6 @@ function saveProjectToFile() {
     document.body.appendChild(a);
     a.click();
     
-    // Cleanup
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
@@ -581,9 +777,7 @@ function saveProjectToFile() {
     setTimeout(() => btn.innerText = originalText, 1500);
 }
 
-// MODIFIED: Load from File
 function loadProjectFromFile() {
-    // Create hidden file input
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json';
@@ -598,22 +792,17 @@ function loadProjectFromFile() {
                 const jsonString = event.target.result;
                 const data = JSON.parse(jsonString);
 
-                // Reset Root
                 rootNode = new MoveNode("root", null, null); 
                 
-                // Restore Counters
                 moveIdCounter = data.maxId || 0;
                 targetNodeForResume = rootNode; 
                 
-                // Rebuild Tree
                 rebuildTree(data.tree, rootNode, data.currentId);
                 
-                // Restore State
                 currentState.currentNode = targetNodeForResume;
                 currentState.activeChild = null;
                 currentState.isCleanView = false;
 
-                // Render
                 renderBoardVisuals();
                 renderNotationPanel();
                 
@@ -656,7 +845,6 @@ function renderBoardVisuals() {
     const endIndex = startIndex + MOVES_PER_SCREEN;
     const visiblePath = currentPath.slice(startIndex, endIndex);
 
-    // --- HINT MODE ---
     if (currentState.isHintMode) {
         dimmer.style.display = 'block';
         if (ghostLayer) ghostLayer.style.display = 'block';
@@ -676,7 +864,6 @@ function renderBoardVisuals() {
         return; 
     }
 
-    // --- STANDARD MODE ---
     dimmer.style.display = 'none';
     if (ghostLayer) ghostLayer.style.display = 'none';
     if (gridLayer) gridLayer.style.display = 'none';
@@ -694,23 +881,21 @@ function renderBoardVisuals() {
         if (rank > 4) isWhiteStart = false; 
     }
 
-    // Draw History Arrows (Green)
     visiblePath.forEach((node, idx) => {
         const realIndex = startIndex + idx; 
         const arrowColor = node.customColor || "green";
         const ringColor = node.customColor || "green";
         const label = getMoveLabel(realIndex, isWhiteStart);
         drawArrowWithLabel(node, arrowColor, ringColor, label);
-        if (node.children.length > 0) drawHeadText(node.moveData.to, node.children.length.toString());
+        if (node.count > 1) drawHeadText(node.moveData.to, node.count);
     });
 
-    // Draw Future Options (Yellow)
     if (!currentState.isCleanView) {
         currentState.currentNode.children.forEach((child, index) => {
             const arrowColor = child.customColor || "yellow";
             const label = (index + 1).toString();
             drawArrowWithLabel(child, arrowColor, "yellow", label);
-            if (child.children.length > 0) drawHeadText(child.moveData.to, child.children.length.toString());
+            if (child.count > 1) drawHeadText(child.moveData.to, child.count);
         });
     }
 }
@@ -732,7 +917,6 @@ function renderVirtualBoard() {
         }
     }
     
-    // Draw Ghost Pieces
     const glyphs = {
         'wK': '♔', 'wQ': '♕', 'wR': '♖', 'wB': '♗', 'wN': '♘', 'wP': '♙',
         'bK': '♚', 'bQ': '♛', 'bR': '♜', 'bB': '♝', 'bN': '♞', 'bP': '♟'
@@ -775,7 +959,36 @@ function renderNotationPanel() {
     const container = document.getElementById('move-list');
     if (!container) return;
     container.innerHTML = '';
-    
+
+    // Show current position stats at the top
+    if (currentPositionStats) {
+        const statsDiv = document.createElement('div');
+        statsDiv.style.color = '#ffeb3b';
+        statsDiv.style.marginBottom = '12px';
+        statsDiv.style.fontSize = '13px';
+        statsDiv.innerHTML = `<strong>Position reached ${currentPositionStats.totalReaches} time${currentPositionStats.totalReaches === 1 ? '' : 's'}</strong><br>`;
+
+        if (currentPositionStats.nextMoves.length > 0) {
+            let movesText = currentPositionStats.nextMoves.map(m => {
+                let str = `${m.from}${m.to} (${m.count}`;
+                if (m.isPossible) str += 'P';
+                if (m.mainlineCount > 0) str += `,${m.mainlineCount}`;
+                str += ')';
+                return str;
+            });
+            statsDiv.innerHTML += 'Next moves: ' + movesText.join(' , ');
+        } else {
+            statsDiv.innerHTML += 'No previous next moves recorded from this position.';
+        }
+
+        container.appendChild(statsDiv);
+    } else {
+        const loading = document.createElement('div');
+        loading.style.color = '#a4a4a4';
+        loading.innerText = 'Loading position stats...';
+        container.appendChild(loading);
+    }
+
     const activePath = getPathToCurrent();
     let futurePath = [];
     let temp = currentState.currentNode;
@@ -810,6 +1023,13 @@ function renderNotationPanel() {
         moveSpan.className = 'notation-move';
         moveSpan.innerText = node.san;
         
+        if (node.count > 1) {
+            const countSpan = document.createElement('span');
+            countSpan.style.color = '#ffeb3b';
+            countSpan.innerText = ` ×${node.count}`;
+            moveSpan.appendChild(countSpan);
+        }
+
         if (activePath.includes(node)) {
             if (node === currentState.currentNode) {
                  moveSpan.classList.add('notation-active'); 
@@ -839,6 +1059,9 @@ function renderNotationPanel() {
                     const link = document.createElement('span');
                     link.className = 'variation-link';
                     link.innerText = sibling.san;
+                    if (sibling.count > 1) {
+                        link.innerText += ` ×${sibling.count}`;
+                    }
                     link.addEventListener('click', () => {
                         currentState.currentNode = sibling;
                         renderBoardVisuals();
@@ -934,6 +1157,7 @@ function drawHeadText(square, text) {
     textEl.setAttribute("x", center.x + "%");
     textEl.setAttribute("y", center.y + "%");
     textEl.setAttribute("class", "head-count");
+    textEl.setAttribute("font-size", "18px"); 
     textEl.setAttribute("dy", "1px"); 
     textEl.textContent = text;
     container.appendChild(textEl);
@@ -989,3 +1213,14 @@ function getSquareCenter(square) {
     if (isBlack) { fileIndex = 7 - fileIndex; rankIndex = 7 - rankIndex; }
     return { x: (fileIndex * 12.5) + 6.25, y: ((7 - rankIndex) * 12.5) + 6.25 };
 }
+
+// ==========================================
+// INITIALIZATION
+// ==========================================
+
+async function init() {
+    await loadRepeatCounts();
+    assignRepeatCountsToTree();
+}
+
+init();

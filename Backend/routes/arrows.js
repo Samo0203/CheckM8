@@ -6,9 +6,11 @@ const router = express.Router();
 router.post("/save-arrow", async (req, res) => {
   const { from, to, color, number, user, boardId, variationID, analysis } = req.body;
 
-  if (!from || !to || !color || number === undefined || !user || !boardId || variationID === undefined || !analysis) {
-    return res.status(400).json({ error: "Missing required fields" });
-  }
+  // Change from strict check to log what's missing
+if (!from || !to || !color || number === undefined || !user || !boardId || variationID === undefined || !analysis) {
+    console.log("Missing fields in /save-arrow:", { from, to, color, number, user, boardId, variationID, analysis });
+    return res.status(400).json({ error: "Missing required fields", missing: { from, to, color, number, user, boardId, variationID, analysis } });
+}
 
   try {
     const newArrow = new Arrow({
@@ -46,24 +48,6 @@ router.get("/get-arrows/:user", async (req, res) => {
     res.json(arrows);
   } catch (err) {
     console.error("Get arrows error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-
-// NEW: Get repeat counts for arrows (from/to) across user's boards
-router.get("/arrow-repeats/:user", async (req, res) => {
-  const { user } = req.params;
-
-  try {
-    const repeats = await Arrow.aggregate([
-      { $match: { user } },
-      { $group: { _id: { from: "$from", to: "$to" }, count: { $sum: 1 } } },
-      { $sort: { count: -1 } }
-    ]);
-    res.json(repeats);
-  } catch (err) {
-    console.error("Arrow repeats error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
