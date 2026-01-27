@@ -39,14 +39,29 @@
 .nav-btn:hover { background: #666; }
 .nav-btn:disabled { opacity: 0.3; cursor: default; }
 
-#btn-hint-toggle { background: #8e44ad; color: white; font-weight: bold; }
+#btn-hint-toggle { background: #8e44ad; color: white; font-weight: bold; width: 100%; }
 #btn-hint-toggle.active { background: #2ecc71; }
+
+#position-stats {
+    flex-shrink: 0;
+    background: #111;
+    padding: 8px;
+    border-bottom: 1px solid #444;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
 
 #move-list {
     background: #151515; border: 1px solid #333; border-radius: 4px;
     padding: 8px; flex-grow: 1; overflow-y: auto;
     font-family: 'Noto Sans', sans-serif; font-size: 13px; color: #bbb; min-height: 100px;
+
+    overflow-y: auto;
+    max-height: 300px;   /* adjust to your UI */
+    padding-top: 6px;
 }
+
 
 .notation-line { padding: 2px 0; line-height: 1.5; border-bottom: 1px solid #222; }
 .notation-turn { color: #666; font-weight: bold; margin-right: 6px; }
@@ -85,3 +100,11 @@
 .move-ring { cursor: pointer; fill: rgba(0,0,0,0.5); stroke-width: 3px; stroke-opacity: 0.9; }
 .arrow-number { font-size: 12px; font-weight: 800; fill: white; pointer-events: none; text-anchor: middle; dominant-baseline: middle; }
 .head-count { font-size: 10px; font-weight: bold; fill: yellow; stroke: black; stroke-width: 2px; paint-order: stroke; pointer-events: none; text-anchor: middle; dominant-baseline: middle; }
+
+#notation-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+

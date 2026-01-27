@@ -65,14 +65,11 @@ async function saveArrow(arrowData) {
     } catch (err) {
         console.error("Failed to save arrow:", err);
         if (err.message.includes("400")) {
-            // Log full error for debugging
             console.log("400 details – check Network tab for response body");
             alert("Save arrow failed (400) – likely missing variationID or analysis. Check console.");
         }
     }
 }
-
-// Add this right after proxyApiCall() and saveArrow()
 
 async function loadRepeatCounts() {
     const user = await getLoggedInUser();
@@ -88,14 +85,23 @@ async function loadRepeatCounts() {
             positionMoveCounts.set(key, new Map());
         }
         const moveKey = entry.from + entry.to;
-        positionMoveCounts.get(key).set(moveKey, entry.count);
+        positionMoveCounts.get(key).set(moveKey, {
+            total: entry.count || 0,
+            possible: entry.possibleCount || 0,
+            mainline: entry.mainlineCount || 0
+        });
     });
 }
 
 function getMoveRepeatCount(fen, from, to) {
     const moves = positionMoveCounts.get(fen);
-    if (!moves) return 0;
-    return moves.get(from + to) || 0;
+    if (!moves) return { total: 0, possible: 0, mainline: 0 };
+    return moves.get(from + to) || { total: 0, possible: 0, mainline: 0 };
+}
+
+// Helper function for zero padding
+function padZero(num) {
+    return num < 10 ? `0${num}` : `${num}`;
 }
 
 // ==========================================
@@ -108,7 +114,7 @@ class MoveNode {
         this.children = [];
         this.moveData = moveData; 
         this.customColor = color;
-        this.count = 0;
+        this.count = { total: 0, possible: 0, mainline: 0 };
         
         if (parent) {
             const preMoveState = parent.boardState;
@@ -141,11 +147,14 @@ const MOVES_PER_SCREEN = 8;
 let initialBoardState = {}; 
 let isBoardScanned = false;
 
-// Repeat count cache: fen → move (from-to) → count
+// Repeat count cache: fen → move (from-to) → {total, possible, mainline}
 let positionMoveCounts = new Map();
 
 // Stats for current position only
-let currentPositionStats = null; // { totalReaches: N, nextMoves: [{from,to,count,isPossible,mainlineCount}] }
+let currentPositionStats = null;
+
+// Track if we're in the process of saving
+let isSaving = false;
 
 // ==========================================
 // 2. STATE ENGINE HELPERS
@@ -270,7 +279,8 @@ function getCurrentFEN(node) {
 
 function assignRepeatCountsToTree(node = rootNode, fen = getCurrentFEN(rootNode)) {
     node.children.forEach(child => {
-        child.count = getMoveRepeatCount(fen, child.moveData.from, child.moveData.to);
+        const counts = getMoveRepeatCount(fen, child.moveData.from, child.moveData.to);
+        child.count = counts;
         const nextFen = getCurrentFEN(child);
         assignRepeatCountsToTree(child, nextFen);
     });
@@ -288,13 +298,12 @@ async function loadPositionStats(fen) {
     }
 
     const encodedFen = encodeURIComponent(fen);
-    console.log("Loading stats for user:", user, "FEN:", fen, "Encoded:", encodedFen);
+    console.log("Loading stats for FEN:", fen);
 
     try {
         const res = await proxyApiCall(`get-move-counts/${user}/${encodedFen}`, "GET");
         console.log("get-move-counts raw response:", res);
 
-        // Handle both {success: true, data: [...]} and direct array [...]
         let countsArray = res;
         if (res && res.success && Array.isArray(res.data)) {
             countsArray = res.data;
@@ -317,13 +326,18 @@ async function loadPositionStats(fen) {
         };
 
         countsArray.forEach(entry => {
-            stats.totalReaches += entry.count;
+            stats.totalReaches += (entry.count || 0) + (entry.possibleCount || 0) + (entry.mainlineCount || 0);
+            
+            const total = (entry.count || 0) + (entry.possibleCount || 0) + (entry.mainlineCount || 0);
+            
             stats.nextMoves.push({
                 from: entry.from,
                 to: entry.to,
-                count: entry.count,
-                isPossible: true,
-                mainlineCount: 0
+                total: total,
+                possible: entry.possibleCount || 0,
+                mainline: entry.mainlineCount || 0,
+                san: entry.san || "",
+                isPossible: (entry.possibleCount || 0) > 0
             });
         });
 
@@ -341,11 +355,17 @@ async function updateCurrentPositionStats() {
     renderNotationPanel();
 }
 
-async function incrementMoveCount(fen, from, to) {
+async function incrementMoveCount(fen, from, to, type = 'mainline') {
     const user = await getLoggedInUser();
     if (!user) return;
 
-    const payload = { user, fen, from, to };
+    const payload = { 
+        user, 
+        fen, 
+        from, 
+        to,
+        type: type
+    };
 
     try {
         await proxyApiCall("increment-move-count", "POST", payload);
@@ -355,27 +375,96 @@ async function incrementMoveCount(fen, from, to) {
 }
 
 async function savePosition() {
+    if (isSaving) return; // Prevent multiple saves
+    isSaving = true;
+    
     const user = await getLoggedInUser();
     if (!user) {
         alert("Please login first.");
+        isSaving = false;
         return;
     }
 
     const fen = getCurrentFEN(currentState.currentNode);
 
-    async function saveTree(n = currentState.currentNode, currentFen = fen) {
+    // FIX 1: Remove duplicate possible moves that are also mainline moves
+    // Group moves by from-to to identify duplicates
+    const moveMap = new Map();
+    
+    function collectMoves(n = currentState.currentNode, currentFen = fen) {
         for (const child of n.children) {
-            await incrementMoveCount(currentFen, child.moveData.from, child.moveData.to);
+            const moveKey = child.moveData.from + child.moveData.to;
+            const existing = moveMap.get(moveKey);
+            
+            if (existing) {
+                // If we have both possible and mainline versions, keep only mainline
+                if (existing.type === 'possible' && child.customColor !== 'yellow') {
+                    // Replace possible with mainline
+                    moveMap.set(moveKey, {
+                        node: child,
+                        fen: currentFen,
+                        type: 'mainline'
+                    });
+                }
+            } else {
+                moveMap.set(moveKey, {
+                    node: child,
+                    fen: currentFen,
+                    type: child.customColor === 'yellow' ? 'possible' : 'mainline'
+                });
+            }
+
             const nextFen = getCurrentFEN(child);
-            await saveTree(child, nextFen);
+            collectMoves(child, nextFen);
         }
     }
 
-    await saveTree();
+    collectMoves();
+
+    // Save only unique moves (no duplicates)
+    for (const [moveKey, moveInfo] of moveMap) {
+        const { node, fen: moveFen, type } = moveInfo;
+        
+        await incrementMoveCount(moveFen, node.moveData.from, node.moveData.to, type);
+        
+        if (!positionMoveCounts.has(moveFen)) {
+            positionMoveCounts.set(moveFen, new Map());
+        }
+        const movesMap = positionMoveCounts.get(moveFen);
+        const currentCounts = movesMap.get(moveKey) || { total: 0, possible: 0, mainline: 0 };
+        
+        if (type === 'possible') {
+            currentCounts.possible = (currentCounts.possible || 0) + 1;
+        } else {
+            currentCounts.mainline = (currentCounts.mainline || 0) + 1;
+        }
+        currentCounts.total = currentCounts.total + 1;
+        
+        movesMap.set(moveKey, currentCounts);
+        node.count = currentCounts;
+    }
+
+    // Update all node counts in the tree
+    function updateTreeCounts(n = currentState.currentNode, currentFen = fen) {
+        for (const child of n.children) {
+            const moveKey = child.moveData.from + child.moveData.to;
+            const counts = positionMoveCounts.get(currentFen)?.get(moveKey) || { total: 0, possible: 0, mainline: 0 };
+            child.count = counts;
+            
+            const nextFen = getCurrentFEN(child);
+            updateTreeCounts(child, nextFen);
+        }
+    }
+    
+    updateTreeCounts();
 
     await updateCurrentPositionStats();
+    
+    renderBoardVisuals();
+    renderNotationPanel();
 
-    alert("Position saved – statistics updated for current board position.");
+    alert("Position saved! Move counts and statistics have been updated.");
+    isSaving = false;
 }
 
 // ==========================================
@@ -383,6 +472,8 @@ async function savePosition() {
 // ==========================================
 let overlayElement = null;
 let svgCanvas = null;
+let lastClickTime = 0;
+const CLICK_DELAY = 300; // ms delay between clicks
 
 setInterval(() => {
     const board = document.querySelector('cg-board');
@@ -425,16 +516,40 @@ function createFloatingOverlay() {
         .arrow-orange { stroke: #e67e22; }
         .arrow-ghost { stroke: #bdc3c7; stroke-opacity: 0.3; }
         .link-line { stroke-width: 2px; stroke-dasharray: 4; }
-        .move-ring { fill: transparent; stroke-width: 3px; cursor: pointer; }
+        .move-ring { fill: transparent; stroke-width: 3px; cursor: pointer; transition: stroke-width 0.1s; pointer-events: auto; }
+        .move-ring:hover { stroke-width: 4px; }
         .ring-green { stroke: #2ecc71; }
         .ring-yellow { stroke: #f1c40f; }
         .ring-blue { stroke: #3498db; }
         .ring-red { stroke: #e74c3c; }
         .ring-orange { stroke: #e67e22; }
-        .arrow-number { font-size: 14px; fill: white; font-weight: bold; text-shadow: 1px 1px 2px black; pointer-events: none; }
+        .arrow-number { 
+            font-size: 14px; 
+            fill: white; 
+            font-weight: bold; 
+            text-shadow: 1px 1px 2px black; 
+            pointer-events: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
         .head-count { font-size: 12px; fill: white; font-weight: bold; text-shadow: 1px 1px 2px black; pointer-events: none; text-anchor: middle; }
-        .project-btn { width: 45%; font-size: 10px; background: #333; color: white; border: 1px solid #555; cursor: pointer; margin-top: 5px; }
+        .project-btn { width: 45%; font-size: 10px; background: #333; color: white; border: 1px solid #555; cursor: pointer; margin-top: 5px; padding: 4px; }
         .project-btn:hover { background: #555; }
+        .nav-btn { width: 45px; font-size: 12px; background: #444; color: white; border: 1px solid #666; cursor: pointer; margin: 2px; padding: 4px; }
+        .nav-btn:hover { background: #555; }
+        .nav-btn:disabled { background: #222; color: #666; cursor: not-allowed; }
+        .btn-row { display: flex; justify-content: space-between; margin: 2px 0; }
+        #nav-input { width: 100%; margin: 5px 0; padding: 4px; background: #222; color: white; border: 1px solid #444; }
+        #move-list { margin-top: 10px; max-height: 200px; overflow-y: auto; font-size: 12px; }
+        .notation-line { padding: 2px 5px; margin: 1px 0; border-radius: 3px; }
+        .notation-turn { color: #888; margin-right: 5px; }
+        .notation-move { cursor: pointer; }
+        .notation-active { background: #2ecc71; color: white !important; padding: 0 5px; border-radius: 3px; }
+        .variation-container { color: #666; margin-left: 5px; }
+        .variation-link { color: #3498db; cursor: pointer; margin-left: 3px; }
+        .variation-link:hover { text-decoration: underline; }
+        .possible-move { color: #f1c40f; }
+        .mainline-move { color: #2ecc71; }
     `;
     document.head.appendChild(style);
 
@@ -460,7 +575,11 @@ function createFloatingOverlay() {
             <button id="btn-load-proj" class="project-btn">Load File</button>
         </div>
 
-        <div id="move-list"></div>
+        <div id="notation-panel">
+    <div id="position-stats"></div>   <!-- FIXED -->
+    <div id="move-list"></div>        <!-- SCROLL -->
+    </div>
+
     `;
     controls.addEventListener('mousedown', e => e.stopPropagation());
     controls.addEventListener('input', (e) => {
@@ -534,14 +653,11 @@ function updateOverlayPosition(board) {
 // 5. NAVIGATION LOGIC
 // ==========================================
 
-function toggleHintMode() {
-    currentState.isHintMode = !currentState.isHintMode;
-    const btn = document.getElementById('btn-hint-toggle');
-    if (btn) btn.classList.toggle('active', currentState.isHintMode);
-    renderBoardVisuals();
-}
-
 async function addMove(from, to, modifiers) {
+    const now = Date.now();
+    if (now - lastClickTime < CLICK_DELAY) return; // Prevent rapid clicks
+    lastClickTime = now;
+    
     currentState.isCleanView = false;
     const existingIndex = currentState.currentNode.children.findIndex(
         child => child.moveData.from === from && child.moveData.to === to
@@ -557,9 +673,8 @@ async function addMove(from, to, modifiers) {
         
         const newNode = new MoveNode(`move_${moveIdCounter}`, currentState.currentNode, { from, to }, color);
         
-        const fen = getCurrentFEN(currentState.currentNode);
-        newNode.count = getMoveRepeatCount(fen, from, to) + 1;
-
+        newNode.count = { total: 0, possible: 0, mainline: 0 };
+        
         currentState.currentNode.children.push(newNode);
         
         saveArrow({
@@ -568,19 +683,36 @@ async function addMove(from, to, modifiers) {
             color: color || 'green',
             number: moveIdCounter
         });
-
-        try {
-            await incrementMoveCount(fen, from, to);
-        } catch (err) {
-            console.error("Failed to increment move count:", err);
-        }
     }
     await updateCurrentPositionStats();
     renderBoardVisuals();
     renderNotationPanel();
 }
 
+function toggleHintMode() {
+    currentState.isHintMode = !currentState.isHintMode;
+    const btn = document.getElementById('btn-hint-toggle');
+    if (btn) {
+        btn.textContent = currentState.isHintMode ? "Hide Hint Board" : "Show Hint Board";
+        btn.classList.toggle('active', currentState.isHintMode);
+    }
+    
+    // Reset screen navigation when toggling hint mode
+    if (!currentState.isHintMode) {
+        const currentPath = getPathToCurrent();
+        const currentLen = currentPath.length;
+        const currentScreenIdx = Math.floor(Math.max(0, currentLen - 1) / MOVES_PER_SCREEN);
+        document.getElementById('status-text').innerText = `Screen ${currentScreenIdx + 1}`;
+    }
+    
+    renderBoardVisuals();
+}
+
 function handleRingClick(node, clickType, modifiers) {
+    const now = Date.now();
+    if (now - lastClickTime < CLICK_DELAY) return; // Prevent rapid clicks
+    lastClickTime = now;
+    
     if (modifiers.alt || modifiers.shift) {
         if (modifiers.alt && modifiers.shift) node.customColor = 'orange';
         else if (modifiers.alt) node.customColor = 'blue';
@@ -626,6 +758,12 @@ function stepForward() {
 }
 
 function prevScreen() {
+    // If in hint mode, exit hint mode first
+    if (currentState.isHintMode) {
+        currentState.isHintMode = false;
+        document.getElementById('btn-hint-toggle').textContent = "Show Hint Board";
+    }
+    
     const path = getPathToCurrent();
     const currentScreenIdx = Math.floor(Math.max(0, path.length - 1) / MOVES_PER_SCREEN);
     if (currentScreenIdx > 0) {
@@ -644,6 +782,12 @@ function prevScreen() {
 }
 
 function nextScreen() {
+    // If in hint mode, exit hint mode first
+    if (currentState.isHintMode) {
+        currentState.isHintMode = false;
+        document.getElementById('btn-hint-toggle').textContent = "Show Hint Board";
+    }
+    
     let temp = currentState.currentNode;
     let limit = MOVES_PER_SCREEN;
     while(temp.children.length > 0 && limit > 0) {
@@ -718,7 +862,7 @@ function getPathToCurrent() {
 }
 
 // ==========================================
-// 5. SERIALIZATION & FILE LOGIC
+// 6. SERIALIZATION & FILE LOGIC
 // ==========================================
 
 function serializeTree(node) {
@@ -726,6 +870,7 @@ function serializeTree(node) {
         id: node.id,
         moveData: node.moveData, 
         customColor: node.customColor,
+        count: node.count,
         children: node.children.map(child => serializeTree(child))
     };
 }
@@ -739,6 +884,7 @@ function rebuildTree(data, parentNode, targetId) {
             childData.moveData, 
             childData.customColor
         );
+        newNode.count = childData.count || { total: 0, possible: 0, mainline: 0 };
         parentNode.children.push(newNode);
 
         if (newNode.id === targetId) {
@@ -825,7 +971,7 @@ function loadProjectFromFile() {
 }
 
 // ==========================================
-// 6. RENDERING (Dual Mode)
+// 7. RENDERING
 // ==========================================
 
 function renderBoardVisuals() {
@@ -838,13 +984,6 @@ function renderBoardVisuals() {
     const ghostLayer = document.getElementById('ghost-layer');
     const gridLayer = document.getElementById('grid-layer');
     
-    const currentPath = getPathToCurrent();
-    const currentLen = currentPath.length;
-    const currentScreenIdx = Math.floor(Math.max(0, currentLen - 1) / MOVES_PER_SCREEN);
-    const startIndex = currentScreenIdx * MOVES_PER_SCREEN;
-    const endIndex = startIndex + MOVES_PER_SCREEN;
-    const visiblePath = currentPath.slice(startIndex, endIndex);
-
     if (currentState.isHintMode) {
         dimmer.style.display = 'block';
         if (ghostLayer) ghostLayer.style.display = 'block';
@@ -852,21 +991,59 @@ function renderBoardVisuals() {
 
         renderVirtualBoard(); 
         
+        // Draw the current move path in hint mode with labels
+        const currentPath = getPathToCurrent();
+        if (currentPath.length > 0) {
+            // Get the correct label for the last move
+            const lastNode = currentPath[currentPath.length - 1];
+            if (lastNode) {
+                const arrowColor = lastNode.customColor || "green";
+                const ringColor = lastNode.customColor || "green";
+                
+                // Get the label for this move
+                let isWhiteStart = true;
+                if (currentPath.length > 0) {
+                    const rank = parseInt(currentPath[0].moveData.from.slice(1));
+                    if (rank > 4) isWhiteStart = false; 
+                }
+                
+                // Calculate the index of this move in the full path
+                const fullIndex = currentPath.length - 1;
+                const label = getMoveLabel(fullIndex, isWhiteStart);
+                
+                // Draw the arrow with its label
+                drawArrowWithLabel(lastNode, arrowColor, ringColor, label);
+            }
+        }
+        
+        // Draw possible moves (children)
         if (!currentState.isCleanView) {
             currentState.currentNode.children.forEach((child, index) => {
                 const arrowColor = child.customColor || "yellow";
                 const label = (index + 1).toString();
                 drawArrowWithLabel(child, arrowColor, "yellow", label);
                 
-                if (child.children.length > 0) drawHeadText(child.moveData.to, child.children.length.toString());
+                // Show possible move count on arrow head
+                if (child.children.length > 1) {
+                    drawHeadText(child.moveData.to, child.children.length);
+                }
             });
         }
+        
         return; 
     }
 
+    // NORMAL MODE (not hint mode)
     dimmer.style.display = 'none';
     if (ghostLayer) ghostLayer.style.display = 'none';
     if (gridLayer) gridLayer.style.display = 'none';
+
+    const currentPath = getPathToCurrent();
+    const currentLen = currentPath.length;
+    const currentScreenIdx = Math.floor(Math.max(0, currentLen - 1) / MOVES_PER_SCREEN);
+    const startIndex = currentScreenIdx * MOVES_PER_SCREEN;
+    const endIndex = startIndex + MOVES_PER_SCREEN;
+    const visiblePath = currentPath.slice(startIndex, endIndex);
 
     document.getElementById('status-text').innerText = `Screen ${currentScreenIdx + 1}`;
     document.getElementById('btn-screen-prev').disabled = (currentScreenIdx === 0);
@@ -886,8 +1063,19 @@ function renderBoardVisuals() {
         const arrowColor = node.customColor || "green";
         const ringColor = node.customColor || "green";
         const label = getMoveLabel(realIndex, isWhiteStart);
+        
+        // Always draw the arrow with label (even if empty)
         drawArrowWithLabel(node, arrowColor, ringColor, label);
-        if (node.count > 1) drawHeadText(node.moveData.to, node.count);
+        
+        // Show count on arrow head if > 1
+        if (node.count.total > 1) {
+            drawHeadText(node.moveData.to, node.count.total);
+        }
+        
+        // Show possible move count on arrow head
+        if (node.children.length > 1) {
+            drawHeadText(node.moveData.to, node.children.length);
+        }
     });
 
     if (!currentState.isCleanView) {
@@ -895,11 +1083,14 @@ function renderBoardVisuals() {
             const arrowColor = child.customColor || "yellow";
             const label = (index + 1).toString();
             drawArrowWithLabel(child, arrowColor, "yellow", label);
-            if (child.count > 1) drawHeadText(child.moveData.to, child.count);
+            
+            // Show count on arrow head if > 1
+            if (child.count.total > 1) {
+                drawHeadText(child.moveData.to, child.count.total);
+            }
         });
     }
 }
-
 function renderVirtualBoard() {
     const state = currentState.currentNode.boardState || {};
     const gridLayer = document.getElementById('grid-layer');
@@ -943,147 +1134,191 @@ function drawGhostPiece(square, char, colorClass) {
 
 function getMoveLabel(index, isWhiteStart) {
     if (isWhiteStart) {
-        if (index === 0) return "1W";
+        if (index === 0) return "1W"; // Keep "1W" for white's first move
         return (Math.floor(index / 2) + 1).toString();
     } else {
-        if (index === 0) return "1B";
-        return (Math.floor((index + 1) / 2) + 1).toString();
+        if (index === 0) return "1B"; // Keep "1B" for black's first move if starting
+        return (Math.floor((index + 1) / 2)).toString();
     }
 }
 
 // ==========================================
-// 7. RENDER NOTATION
+// 8. RENDER NOTATION PANEL
 // ==========================================
 
 function renderNotationPanel() {
-    const container = document.getElementById('move-list');
-    if (!container) return;
-    container.innerHTML = '';
+    const statsContainer = document.getElementById('position-stats');
+    const moveContainer = document.getElementById('move-list');
 
-    // Show current position stats at the top
+    if (!statsContainer || !moveContainer) return;
+
+    statsContainer.innerHTML = '';
+    moveContainer.innerHTML = '';
+
+    // ============================================================
+    // 1. FIXED TOP STATS SECTION (Position Statistics)
+    // ============================================================
     if (currentPositionStats) {
         const statsDiv = document.createElement('div');
         statsDiv.style.color = '#ffeb3b';
-        statsDiv.style.marginBottom = '12px';
+        statsDiv.style.padding = '8px 6px';
+        statsDiv.style.borderBottom = '1px solid #444';
         statsDiv.style.fontSize = '13px';
-        statsDiv.innerHTML = `<strong>Position reached ${currentPositionStats.totalReaches} time${currentPositionStats.totalReaches === 1 ? '' : 's'}</strong><br>`;
+        statsDiv.style.lineHeight = '1.5';
 
-        if (currentPositionStats.nextMoves.length > 0) {
-            let movesText = currentPositionStats.nextMoves.map(m => {
-                let str = `${m.from}${m.to} (${m.count}`;
-                if (m.isPossible) str += 'P';
-                if (m.mainlineCount > 0) str += `,${m.mainlineCount}`;
-                str += ')';
-                return str;
-            });
-            statsDiv.innerHTML += 'Next moves: ' + movesText.join(' , ');
+        const totalStr = padZero(currentPositionStats.totalReaches);
+
+        let positionHeader = "";
+        if (currentState.currentNode === rootNode) {
+            positionHeader = `Start Position (${totalStr})`;
         } else {
-            statsDiv.innerHTML += 'No previous next moves recorded from this position.';
+            const path = getPathToCurrent();
+            const ply = path.length - 1;
+            const moveNum = Math.floor((ply + 1) / 2);
+            const isWhite = (ply % 2 !== 0);
+
+            const movePrefix = isWhite ? `${moveNum}.` : `${moveNum}...`;
+            const moveSan = currentState.currentNode.san || "Move";
+            positionHeader = `${movePrefix} ${moveSan} (${totalStr})`;
         }
 
-        container.appendChild(statsDiv);
+        let nextMovesText = "";
+        if (currentPositionStats.nextMoves.length > 0) {
+            const path = getPathToCurrent();
+            const currentPly = path.length - 1;
+            const nextPly = currentPly + 1;
+            const nextMoveNum = Math.ceil(nextPly / 2);
+            const nextPrefix = (nextPly % 2 !== 0) ? `${nextMoveNum}.` : `${nextMoveNum}...`;
+
+            const movesStrings = currentPositionStats.nextMoves.map(m => {
+                const moveLabel = m.san || `${m.from}-${m.to}`;
+                const parts = [];
+                if (m.possible > 0) parts.push(`${padZero(m.possible)}P`);
+                if (m.mainline > 0) parts.push(padZero(m.mainline));
+                const countStr = parts.length ? `(${parts.join(',')})` : '';
+
+                return `<span class="${m.possible > 0 ? 'possible-move' : 'mainline-move'}">${moveLabel}</span>
+                        <span style="color:#ffeb3b">${countStr}</span>`;
+            });
+
+            nextMovesText = `
+                <div style="margin-top:5px;color:#a4a4a4;">
+                    ${nextPrefix} ${movesStrings.join(' , ')}
+                </div>
+                <div style="color:#888;font-size:10px;margin-top:3px;">
+                    <span class="possible-move">Yellow</span>: Possible |
+                    <span class="mainline-move">Green</span>: Mainline
+                </div>
+            `;
+        } else {
+            nextMovesText = `
+                <div style="color:#777;font-style:italic;margin-top:5px;">
+                    No saved moves from this position
+                </div>`;
+        }
+
+        statsDiv.innerHTML = `
+            <strong style="color:#2ecc71">${positionHeader}</strong>
+            <div style="color:#a4a4a4;font-size:11px;margin-top:2px;">
+                Position reached ${totalStr} time${currentPositionStats.totalReaches === 1 ? '' : 's'}
+            </div>
+            ${nextMovesText}
+        `;
+
+        statsContainer.appendChild(statsDiv);
     } else {
-        const loading = document.createElement('div');
-        loading.style.color = '#a4a4a4';
-        loading.innerText = 'Loading position stats...';
-        container.appendChild(loading);
+        const statsDiv = document.createElement('div');
+        statsDiv.style.color = '#e74c3c';
+        statsDiv.style.padding = '8px 6px';
+        statsDiv.style.borderBottom = '1px solid #444';
+        statsDiv.style.fontSize = '13px';
+
+        statsDiv.innerHTML = `
+            <strong>Unsaved Position</strong>
+            <div style="color:#a4a4a4;font-size:11px;margin-top:2px;">
+                Click "Save Position" to record move statistics
+            </div>
+            <div style="color:#888;font-size:10px;margin-top:3px;">
+                Click = mainline | Alt+click = possible
+            </div>
+        `;
+        statsContainer.appendChild(statsDiv);
     }
 
+    // ============================================================
+    // 2. SCROLLABLE NOTATION LIST (Moves Only)
+    // ============================================================
     const activePath = getPathToCurrent();
     let futurePath = [];
     let temp = currentState.currentNode;
-    while(temp.children.length > 0) {
+
+    while (temp.children.length > 0) {
         temp = temp.children[0];
         futurePath.push(temp);
     }
+
     const displayPath = [...activePath, ...futurePath];
 
-    let moveCounter = 1; 
+    let moveCounter = 1;
     let isWhiteTurn = true;
-    if (displayPath.length > 0) {
-         const rank = parseInt(displayPath[0].moveData.from.slice(1));
-         if (rank > 4) isWhiteTurn = false; 
-    }
 
     displayPath.forEach((node, index) => {
+        if (!node.moveData) return;
+
         const div = document.createElement('div');
         div.className = 'notation-line';
 
-        const numSpan = document.createElement('span');
-        numSpan.className = 'notation-turn';
-        if (isWhiteTurn) {
-            numSpan.innerText = `${moveCounter}.`;
-            div.appendChild(numSpan);
-        } else if (index === 0) {
-            numSpan.innerText = `${moveCounter}...`;
+        if (isWhiteTurn || index === 0) {
+            const numSpan = document.createElement('span');
+            numSpan.className = 'notation-turn';
+            numSpan.innerText = isWhiteTurn ? `${moveCounter}.` : `${moveCounter}...`;
             div.appendChild(numSpan);
         }
 
         const moveSpan = document.createElement('span');
         moveSpan.className = 'notation-move';
-        moveSpan.innerText = node.san;
-        
-        if (node.count > 1) {
+        moveSpan.innerHTML = node.san;
+
+        if (node.count.total > 0) {
             const countSpan = document.createElement('span');
-            countSpan.style.color = '#ffeb3b';
-            countSpan.innerText = ` ×${node.count}`;
+            countSpan.style.marginLeft = '3px';
+            countSpan.style.fontSize = '0.9em';
+            countSpan.style.color = node.customColor === 'yellow' ? '#f1c40f' : '#2ecc71';
+
+            const parts = [];
+            if (node.count.possible > 0) parts.push(`${node.count.possible}P`);
+            if (node.count.mainline > 0) parts.push(`${node.count.mainline}`);
+
+            countSpan.innerText = `×${parts.length ? parts.join(',') : node.count.total}`;
             moveSpan.appendChild(countSpan);
         }
 
-        if (activePath.includes(node)) {
-            if (node === currentState.currentNode) {
-                 moveSpan.classList.add('notation-active'); 
-                 setTimeout(() => moveSpan.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 10);
-             } else {
-                 moveSpan.style.color = "#2ecc71";
-            }
+        if (node === currentState.currentNode) {
+            moveSpan.classList.add('notation-active');
+            setTimeout(() => moveSpan.scrollIntoView({ block: 'nearest' }), 10);
+        } else if (activePath.includes(node)) {
+            moveSpan.style.color = node.customColor === 'yellow' ? '#f1c40f' : '#2ecc71';
         } else {
-             moveSpan.style.color = "#888";
+            moveSpan.style.color = '#888';
         }
-        
+
         moveSpan.addEventListener('click', () => {
             currentState.currentNode = node;
             renderBoardVisuals();
             renderNotationPanel();
         });
-        div.appendChild(moveSpan);
 
-        if (node.parent && node.parent.children.length > 1) {
-            const siblings = node.parent.children.filter(n => n !== node);
-            if (siblings.length > 0) {
-                const varContainer = document.createElement('span');
-                varContainer.className = 'variation-container';
-                varContainer.innerText = "or ";
-                
-                siblings.forEach((sibling, i) => {
-                    const link = document.createElement('span');
-                    link.className = 'variation-link';
-                    link.innerText = sibling.san;
-                    if (sibling.count > 1) {
-                        link.innerText += ` ×${sibling.count}`;
-                    }
-                    link.addEventListener('click', () => {
-                        currentState.currentNode = sibling;
-                        renderBoardVisuals();
-                        renderNotationPanel();
-                    });
-      
-                    varContainer.appendChild(link);
-                    if (i < siblings.length - 1) {
-                        varContainer.appendChild(document.createTextNode(", "));
-                    }
-                });
-                div.appendChild(varContainer);
-            }
-        }
-        container.appendChild(div);
-        if (!isWhiteTurn) moveCounter++; 
+        div.appendChild(moveSpan);
+        moveContainer.appendChild(div);
+
+        if (!isWhiteTurn) moveCounter++;
         isWhiteTurn = !isWhiteTurn;
     });
 }
 
+
 // ==========================================
-// 8. DRAWING HELPERS
+// 9. DRAWING HELPERS
 // ==========================================
 
 function drawArrowWithLabel(node, arrowColor, ringColor, labelText) {
@@ -1105,6 +1340,7 @@ function drawArrowWithLabel(node, arrowColor, ringColor, labelText) {
     line.setAttribute("class", cssClass);
     line.setAttribute("marker-end", markerId);
     arrowLayer.appendChild(line);
+    
     if (arrowColor === 'ghost') return;
 
     const midX = (start.x + end.x) / 2;
@@ -1128,7 +1364,7 @@ function drawArrowWithLabel(node, arrowColor, ringColor, labelText) {
     const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
     circle.setAttribute("cx", labelX + "%");
     circle.setAttribute("cy", labelY + "%");
-    circle.setAttribute("r", "3.5%"); 
+    circle.setAttribute("r", "3.5%");
     circle.setAttribute("class", `move-ring ring-${ringColor}`);
 
     circle.addEventListener('click', (e) => { 
@@ -1142,10 +1378,21 @@ function drawArrowWithLabel(node, arrowColor, ringColor, labelText) {
     });
     ringLayer.appendChild(circle);
 
+    // Create a transparent rectangle behind the text to prevent clicks
+    const textBg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    textBg.setAttribute("x", (labelX - 3) + "%");
+    textBg.setAttribute("y", (labelY - 1.5) + "%");
+    textBg.setAttribute("width", "6%");
+    textBg.setAttribute("height", "3%");
+    textBg.setAttribute("fill", "transparent");
+    textBg.setAttribute("pointer-events", "none");
+    textLayer.appendChild(textBg);
+
     const textEl = document.createElementNS("http://www.w3.org/2000/svg", "text");
     textEl.setAttribute("x", labelX + "%");
     textEl.setAttribute("y", labelY + "%");
     textEl.setAttribute("class", "arrow-number");
+    textEl.setAttribute("pointer-events", "none");
     textEl.textContent = labelText;
     textLayer.appendChild(textEl);
 }
@@ -1159,37 +1406,113 @@ function drawHeadText(square, text) {
     textEl.setAttribute("class", "head-count");
     textEl.setAttribute("font-size", "18px"); 
     textEl.setAttribute("dy", "1px"); 
+    textEl.setAttribute("pointer-events", "none");
     textEl.textContent = text;
     container.appendChild(textEl);
 }
 
 // ==========================================
-// 9. INPUT
+// 10. INPUT (FIXED for click issues)
 // ==========================================
 function setupMouseInteractions(overlay) {
     let startSquare = null;
+    let isDrawing = false;
+    let mouseDownTime = 0;
+    
     overlay.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
-        if (e.target.tagName === 'circle') return; 
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return; 
+        mouseDownTime = Date.now();
+        
+        // Check if clicking on interactive elements
+        if (e.target.tagName === 'circle' || 
+            e.target.tagName === 'INPUT' || 
+            e.target.tagName === 'BUTTON' ||
+            e.target.tagName === 'text') {
+            return;
+        }
+        
         const svg = document.getElementById('arrow-canvas');
         if(svg) {
             const rect = svg.getBoundingClientRect(); 
             startSquare = getSquareFromEvent(e, rect);
+            isDrawing = true;
         }
     });
+    
+    overlay.addEventListener('mousemove', (e) => {
+        if (!isDrawing || !startSquare) return;
+    });
+    
     overlay.addEventListener('mouseup', (e) => {
-        if (!startSquare) return;
+        if (!isDrawing || !startSquare) return;
+        
+        // Check if this was a quick click (not a drag)
+        const clickDuration = Date.now() - mouseDownTime;
+        if (clickDuration > 200) {
+            const svg = document.getElementById('arrow-canvas');
+            if(svg) {
+                const rect = svg.getBoundingClientRect();
+                const endSquare = getSquareFromEvent(e, rect);
+                if (endSquare && startSquare !== endSquare) {
+                    const modifiers = { 
+                        alt: e.altKey, 
+                        shift: e.shiftKey 
+                    };
+                    addMove(startSquare, endSquare, modifiers);
+                }
+            }
+        }
+        
+        startSquare = null;
+        isDrawing = false;
+        mouseDownTime = 0;
+    });
+    
+    // Add a simple click handler for navigation (not drawing)
+    overlay.addEventListener('click', (e) => {
+        // Only handle clicks on the board background, not on interactive elements
+        if (e.target.id === 'board-dimmer' || 
+            e.target.tagName === 'rect' || 
+            e.target.tagName === 'svg') {
+            
+            // Check if this was a quick click
+            if (Date.now() - mouseDownTime < 200) {
+                console.log("Board background clicked");
+            }
+        }
+    });
+    
+    // Add touch support
+    overlay.addEventListener('touchstart', (e) => {
+        if (e.target.tagName === 'circle' || e.target.tagName === 'text') return;
+        const touch = e.touches[0];
         const svg = document.getElementById('arrow-canvas');
         if(svg) {
             const rect = svg.getBoundingClientRect();
-            const endSquare = getSquareFromEvent(e, rect);
+            startSquare = getSquareFromEvent({
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            }, rect);
+            isDrawing = true;
+        }
+    });
+    
+    overlay.addEventListener('touchend', (e) => {
+        if (!isDrawing || !startSquare) return;
+        const touch = e.changedTouches[0];
+        const svg = document.getElementById('arrow-canvas');
+        if(svg) {
+            const rect = svg.getBoundingClientRect();
+            const endSquare = getSquareFromEvent({
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            }, rect);
             if (endSquare && startSquare !== endSquare) {
-                 const modifiers = { alt: e.altKey, shift: e.shiftKey };
-                 addMove(startSquare, endSquare, modifiers);
+                addMove(startSquare, endSquare, { alt: false, shift: false });
             }
         }
         startSquare = null;
+        isDrawing = false;
     });
 }
 
@@ -1219,8 +1542,20 @@ function getSquareCenter(square) {
 // ==========================================
 
 async function init() {
+    // Load any previously saved counts
     await loadRepeatCounts();
     assignRepeatCountsToTree();
+    
+    // Load current position stats
+    await updateCurrentPositionStats();
+    
+    console.log("Arrow Navigator initialized - use 'Save Position' to record move statistics");
+    console.log("Yellow arrows = Possible moves | Green arrows = Mainline moves");
 }
 
-init();
+// Call init when ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    init();
+}
