@@ -22,7 +22,8 @@
   ],
 
   "background": {
-    "service_worker": "background/background.js"
+    "service_worker": "background/background.js",
+    "type": "module"
   },
 
   "action": {
@@ -32,20 +33,23 @@
   "content_scripts": [
     {
       "matches": ["https://lichess.org/*"],
-      "js": ["content/drawArrows.js"],
+      "js": [
+        "content/content.js",
+        "content/drawArrows.js"
+      ],
       "css": ["content/style.css"]
     }
   ],
 
-"web_accessible_resources": [
-  {
-    "resources": [
-      "stockfish/stockfish.js",
-      "stockfish/stockfish.wasm",
-      "offscreen.html",
-      "offscreen.js"
-    ],
-    "matches": ["<all_urls>"]
-  }
-]
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "stockfish/stockfish.js",
+        "stockfish/stockfish.wasm",
+        "offscreen.html",
+        "offscreen.js"
+      ],
+      "matches": ["chrome-extension://*/*"]
+    }
+  ]
 }
