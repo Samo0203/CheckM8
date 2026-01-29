@@ -20,17 +20,6 @@
     box-shadow: 0 4px 10px rgba(0,0,0,0.6);
 }
 
-#nav-input {
-    background: #333;
-    border: 1px solid #555;
-    color: white;
-    padding: 6px;
-    border-radius: 4px;
-    font-family: monospace;
-    width: 100%;
-    box-sizing: border-box;
-}
-
 .btn-row { display: flex; gap: 5px; justify-content: space-between; }
 .nav-btn {
     background: #444; border: 1px solid #666; color: white;
