@@ -54,22 +54,19 @@ async function saveArrow(arrowData) {
         user: user,
         boardId: window.location.pathname.split('/').pop() || "default-board",
         variationID: 0,
-        analysis: "unknown"
+        analysis: arrowData.analysis || "unknown"   // ← now uses computed analysis
     };
 
     console.log("Sending arrow payload:", payload);
 
-        try {
+    try {
         const response = await proxyApiCall("save-arrow", "POST", payload);
         console.log("Arrow saved successfully:", response);
     } catch (err) {
         console.error("Failed to save arrow:", err);
-        if (err.message.includes("400")) {
-            console.log("400 details – check Network tab for response body");
-            alert("Save arrow failed (400) – likely missing variationID or analysis. Check console.");
-        }
     }
 }
+
 
 async function loadRepeatCounts() {
     const user = await getLoggedInUser();
@@ -115,7 +112,15 @@ class MoveNode {
         this.moveData = moveData; 
         this.customColor = color;
         this.count = { total: 0, possible: 0, mainline: 0 };
-        
+        this.analysis = {
+    quality: null,   // "best" | "good" | "bad"
+    eval: null,      // centipawn
+    bestEval: null,  // centipawn
+    depth: null,
+    inProgress: false,
+    attempted: false
+};
+
         if (parent) {
             const preMoveState = parent.boardState;
             const pieceCode = preMoveState[moveData.from] || ""; 
@@ -142,6 +147,7 @@ let currentState = {
     isCleanView: false,
     isHintMode: false 
 };
+let isAnalysisMode = false;
 let moveIdCounter = 0;
 const MOVES_PER_SCREEN = 8; 
 let initialBoardState = {}; 
@@ -249,40 +255,123 @@ function scanFullBoard() {
     return state;
 }
 
-function getCurrentFEN(node) {
-    const pieces = node.boardState || {};
-    const ranks = Array(8).fill(null).map(() => Array(8).fill(''));
-    
-    Object.entries(pieces).forEach(([sq, code]) => {
-        const file = 'abcdefgh'.indexOf(sq[0]);
-        const rank = 8 - parseInt(sq[1]);
-        ranks[rank][file] = code;
-    });
-    
-    let fen = '';
-    for (let r = 0; r < 8; r++) {
-        let empty = 0;
-        for (let f = 0; f < 8; f++) {
-            if (ranks[r][f]) {
-                fen += empty ? empty : '';
-                fen += ranks[r][f].toLowerCase();
-                empty = 0;
-            } else {
-                empty++;
-            }
-        }
-        fen += empty ? empty : '';
-        if (r < 7) fen += '/';
-    }
-    return fen + ' w - - 0 1';
-}
-
 function assignRepeatCountsToTree(node = rootNode, fen = getCurrentFEN(rootNode)) {
     node.children.forEach(child => {
         const counts = getMoveRepeatCount(fen, child.moveData.from, child.moveData.to);
         child.count = counts;
         const nextFen = getCurrentFEN(child);
         assignRepeatCountsToTree(child, nextFen);
+    });
+}
+
+// ==========================================
+// STOCKFISH ARROW ANALYSIS
+// ==========================================
+
+// ==========================================
+// STOCKFISH ARROW ANALYSIS
+// ==========================================
+
+// Tree-based FEN generator – REQUIRED for stats, saving, navigation, and correct analysis
+function getCurrentFEN(node) {
+    const pieces = node.boardState || {};
+    const ranks = Array(8).fill(null).map(() => Array(8).fill(''));
+
+    Object.entries(pieces).forEach(([sq, code]) => {
+        const file = 'abcdefgh'.indexOf(sq[0]);
+        const rank = 8 - parseInt(sq[1]);
+        if (file >= 0 && rank >= 0 && file < 8 && rank < 8) {
+            ranks[rank][file] = code;  // code is like 'wP', 'bK'
+        }
+    });
+
+    let fen = '';
+    for (let r = 0; r < 8; r++) {
+        let empty = 0;
+        for (let f = 0; f < 8; f++) {
+            const code = ranks[r][f];
+            if (code) {
+                if (empty) fen += empty;
+                empty = 0;
+                const type = code[1];  // 'P', 'K', etc.
+                fen += code[0] === 'w' ? type.toUpperCase() : type.toLowerCase();
+            } else {
+                empty++;
+            }
+        }
+        if (empty) fen += empty;
+        if (r < 7) fen += '/';
+    }
+
+    // Side to move based on path length (ply count)
+    const path = getPathToCurrent();
+    const ply = path.length;
+    const sideToMove = ply % 2 === 0 ? 'w' : 'b';
+
+    return fen + ` ${sideToMove} - - 0 1`;
+}
+
+// Correct Stockfish analysis – uses FEN from the position BEFORE the move (parent node)
+async function analyzeMoveWithStockfish(node) {
+    const parentNode = node.parent || rootNode;
+    const fen = getCurrentFEN(parentNode);  // Accurate tree FEN
+    if (!fen || fen.includes('undefined') || fen.split(' ')[0].length < 10) {
+        node.analysis.quality = 'unknown';
+        renderBoardVisuals();
+        renderNotationPanel();
+        return;
+    }
+
+    const uci = node.moveData.from + node.moveData.to;
+
+    let evalData;
+    try {
+        evalData = await new Promise((resolve, reject) => {
+  const timeout = setTimeout(() => reject(new Error("Analysis timeout")), 30000);  // ← 30 seconds
+  chrome.runtime.sendMessage({
+    type: "ANALYZE_MOVE",
+    fen: fen,
+    move: uci
+  }, response => {
+    clearTimeout(timeout);
+    if (chrome.runtime.lastError || response?.error) {
+      reject(response?.error || chrome.runtime.lastError);
+    } else {
+      resolve(response);
+    }
+  });
+});
+    } catch (err) {
+        console.warn("Stockfish analysis timed out for move:", uci, "in position:", fen);
+        node.analysis.quality = 'unknown';
+    }
+
+    if (evalData) {
+  if (evalData.candidateRank !== null) {
+    if (evalData.candidateRank <= 3) {
+      node.analysis.quality = 'best';   // Top 3
+    } else if (evalData.candidateRank <= 6) {
+      node.analysis.quality = 'good';   // 4-6
+    } else {
+      node.analysis.quality = 'bad';
+    }
+  } else {
+    node.analysis.quality = 'bad';  // Outside top 6
+  }
+} else {
+  node.analysis.quality = 'unknown';
+}
+
+    // Re-render and re-save with correct quality
+    renderBoardVisuals();
+    renderNotationPanel();
+
+    saveArrow({
+        from: node.moveData.from,
+        to: node.moveData.to,
+        color: node.customColor || 'green',
+        number: node.number,
+        analysis: node.analysis.quality
     });
 }
 
@@ -559,6 +648,7 @@ function createFloatingOverlay() {
     controls.innerHTML = `
         <div id="status-text" style="color:#aaa; font-size:11px; text-align:center;">Screen 1</div>
         <button id="btn-hint-toggle" class="nav-btn" style="margin-bottom:5px;">Show Hint Board</button>
+        <button id="btn-analysis-toggle" class="nav-btn" style="margin-bottom:5px;">Analysis</button>
         <div class="btn-row">
             <button id="btn-screen-prev" class="nav-btn screen-btn" disabled>&lt;&lt;</button>
             <button id="btn-screen-next" class="nav-btn screen-btn" disabled>&gt;&gt;</button>
@@ -593,6 +683,13 @@ function createFloatingOverlay() {
     controls.querySelector('#btn-save-position').addEventListener('click', savePosition);
     controls.querySelector('#btn-save-proj').addEventListener('click', saveProjectToFile);
     controls.querySelector('#btn-load-proj').addEventListener('click', loadProjectFromFile);
+
+    controls.querySelector('#btn-analysis-toggle').addEventListener('click', () => {
+    isAnalysisMode = !isAnalysisMode;
+    const btn = document.getElementById('btn-analysis-toggle');
+    btn.classList.toggle('active', isAnalysisMode);
+    renderBoardVisuals(); // refresh arrows with/without analysis
+});
 
     const svgContainer = document.createElement('div');
     svgContainer.style.width = '100%';
@@ -653,40 +750,76 @@ function updateOverlayPosition(board) {
 // 5. NAVIGATION LOGIC
 // ==========================================
 
-async function addMove(from, to, modifiers) {
-    const now = Date.now();
-    if (now - lastClickTime < CLICK_DELAY) return; // Prevent rapid clicks
-    lastClickTime = now;
-    
-    currentState.isCleanView = false;
-    const existingIndex = currentState.currentNode.children.findIndex(
-        child => child.moveData.from === from && child.moveData.to === to
-    );
-    if (existingIndex > -1) {
-        currentState.currentNode.children.splice(existingIndex, 1);
-    } else {
-        moveIdCounter++;
-        let color = null;
-        if (modifiers.alt && modifiers.shift) color = 'orange';
-        else if (modifiers.alt) color = 'blue';
-        else if (modifiers.shift) color = 'red';
-        
-        const newNode = new MoveNode(`move_${moveIdCounter}`, currentState.currentNode, { from, to }, color);
-        
-        newNode.count = { total: 0, possible: 0, mainline: 0 };
-        
-        currentState.currentNode.children.push(newNode);
-        
-        saveArrow({
-            from: from,
-            to: to,
-            color: color || 'green',
-            number: moveIdCounter
-        });
-    }
-    await updateCurrentPositionStats();
-    renderBoardVisuals();
-    renderNotationPanel();
+async function addMove(startSquare, endSquare, modifiers = { alt: false, shift: false }) {
+  // Fixed variable names (use startSquare/endSquare consistently – assuming "from/to" was a copy-paste error)
+  const from = startSquare;
+  const to = endSquare;
+  const move = from + to;
+
+  const now = Date.now();
+  if (now - lastClickTime < CLICK_DELAY) return; // Prevent rapid clicks
+  lastClickTime = now;
+  
+  currentState.isCleanView = false;
+
+  // Toggle logic: remove if already exists
+  const existingIndex = currentState.currentNode.children.findIndex(
+      child => child.moveData.from === from && child.moveData.to === to
+  );
+  if (existingIndex > -1) {
+      currentState.currentNode.children.splice(existingIndex, 1);
+  } else {
+      moveIdCounter++;
+      let color = null;
+      if (modifiers.alt && modifiers.shift) color = 'orange';
+      else if (modifiers.alt) color = 'blue';
+      else if (modifiers.shift) color = 'red';
+      
+      const newNode = new MoveNode(
+          `move_${moveIdCounter}`,
+          currentState.currentNode,
+          { from, to },
+          color
+      );
+
+      // Initialize analysis state on the node
+      newNode.analysis = newNode.analysis || {};
+      newNode.analysis.quality = null;      // null = not analyzed yet
+      newNode.analysis.inProgress = false;
+
+      // Store the number on the node so we can re-use it when updating analysis later
+      newNode.number = moveIdCounter;
+
+      // 🔥 TRIGGER ANALYSIS HERE (only if not already done/in progress)
+      if (!newNode.analysis.quality && !newNode.analysis.attempted) {
+          newNode.analysis.attempted = true;
+          newNode.analysis.inProgress = true;
+          analyzeMoveWithStockfish(newNode)
+              .finally(() => {
+                  newNode.analysis.inProgress = false;
+              })
+              .catch(() => {
+            newNode.analysis.inProgress = false;
+              });
+      }
+
+      newNode.count = { total: 0, possible: 0, mainline: 0 };
+      
+      currentState.currentNode.children.push(newNode);
+      
+      // Initial save with "unknown" (visual appears immediately)
+      saveArrow({
+          from: from,
+          to: to,
+          color: color || 'green',
+          number: newNode.number,
+          analysis: newNode.analysis.quality || 'unknown'
+      });
+  }
+
+  await updateCurrentPositionStats();
+  renderBoardVisuals();
+  renderNotationPanel();
 }
 
 function toggleHintMode() {
@@ -970,70 +1103,92 @@ function loadProjectFromFile() {
     input.click();
 }
 
-// ==========================================
-// 7. RENDERING
-// ==========================================
 
 function renderBoardVisuals() {
     if (!svgCanvas) return;
     ['arrows-layer', 'links-layer', 'rings-layer', 'text-layer', 'ghost-layer', 'grid-layer'].forEach(id => {
         const el = document.getElementById(id);
-        if(el) el.innerHTML = '';
+        if (el) el.innerHTML = '';
     });
     const dimmer = document.getElementById('board-dimmer');
     const ghostLayer = document.getElementById('ghost-layer');
     const gridLayer = document.getElementById('grid-layer');
-    
+
     if (currentState.isHintMode) {
         dimmer.style.display = 'block';
         if (ghostLayer) ghostLayer.style.display = 'block';
         if (gridLayer) gridLayer.style.display = 'block';
 
-        renderVirtualBoard(); 
-        
-        // Draw the current move path in hint mode with labels
+        renderVirtualBoard();
+
         const currentPath = getPathToCurrent();
         if (currentPath.length > 0) {
-            // Get the correct label for the last move
             const lastNode = currentPath[currentPath.length - 1];
             if (lastNode) {
-                const arrowColor = lastNode.customColor || "green";
-                const ringColor = lastNode.customColor || "green";
-                
-                // Get the label for this move
+                // 🔧 Apply analysis coloring if enabled
+                const quality = lastNode.analysis?.quality || "unknown";
+                let ringColor = lastNode.customColor || "green";
+                let arrowColor = lastNode.customColor || "green";
+
+                if (isAnalysisMode) {
+                    if (quality === "best") {
+                        ringColor = "darkblue";
+                        arrowColor = "darkblue";
+                    } else if (quality === "good") {
+                        ringColor = "darkgreen";
+                        arrowColor = "darkgreen";
+                    } else if (quality === "bad") {
+                        ringColor = "darkred";
+                        arrowColor = "darkred";
+                    }
+                }
+
                 let isWhiteStart = true;
                 if (currentPath.length > 0) {
                     const rank = parseInt(currentPath[0].moveData.from.slice(1));
-                    if (rank > 4) isWhiteStart = false; 
+                    if (rank > 4) isWhiteStart = false;
                 }
-                
-                // Calculate the index of this move in the full path
                 const fullIndex = currentPath.length - 1;
                 const label = getMoveLabel(fullIndex, isWhiteStart);
-                
-                // Draw the arrow with its label
+
                 drawArrowWithLabel(lastNode, arrowColor, ringColor, label);
             }
         }
-        
-        // Draw possible moves (children)
+
         if (!currentState.isCleanView) {
             currentState.currentNode.children.forEach((child, index) => {
-                const arrowColor = child.customColor || "yellow";
-                const label = (index + 1).toString();
-                drawArrowWithLabel(child, arrowColor, "yellow", label);
-                
-                // Show possible move count on arrow head
-                if (child.children.length > 1) {
-                    drawHeadText(child.moveData.to, child.children.length);
-                }
-            });
-        }
-        
-        return; 
+    if (!child.analysis.quality && !child.analysis.attempted) {
+        child.analysis.attempted = true;
+        child.analysis.analysisInProgress = true;
+        analyzeMoveWithStockfish(child).then(() => {
+            child.analysis.analysisInProgress = false;
+        }).catch(() => {
+            child.analysis.inProgress = false;
+        });
     }
 
-    // NORMAL MODE (not hint mode)
+    let arrowColor = child.customColor || "yellow";
+    let ringColor = child.customColor || "yellow";
+    let label = (index + 1).toString();
+
+    if (isAnalysisMode) {
+        const quality = child.analysis?.quality || "unknown";
+        if (quality === "best") { arrowColor = "darkblue"; ringColor = "darkblue"; }
+        else if (quality === "good") { arrowColor = "darkgreen"; ringColor = "darkgreen"; }
+        else if (quality === "bad") { arrowColor = "darkred"; ringColor = "darkred"; }
+    }
+
+    drawArrowWithLabel(child, arrowColor, ringColor, label);
+
+    if (child.children.length > 1) {
+        drawHeadText(child.moveData.to, child.children.length);
+    }
+});
+        }
+        return;
+    }
+
+    // NORMAL MODE
     dimmer.style.display = 'none';
     if (ghostLayer) ghostLayer.style.display = 'none';
     if (gridLayer) gridLayer.style.display = 'none';
@@ -1047,7 +1202,7 @@ function renderBoardVisuals() {
 
     document.getElementById('status-text').innerText = `Screen ${currentScreenIdx + 1}`;
     document.getElementById('btn-screen-prev').disabled = (currentScreenIdx === 0);
-    
+
     if (currentScreenIdx > 0 && currentPath[startIndex - 1]) {
         drawArrowWithLabel(currentPath[startIndex - 1], "ghost", "ghost", "");
     }
@@ -1055,42 +1210,73 @@ function renderBoardVisuals() {
     let isWhiteStart = true;
     if (currentPath.length > 0) {
         const rank = parseInt(currentPath[0].moveData.from.slice(1));
-        if (rank > 4) isWhiteStart = false; 
+        if (rank > 4) isWhiteStart = false;
     }
 
     visiblePath.forEach((node, idx) => {
-        const realIndex = startIndex + idx; 
-        const arrowColor = node.customColor || "green";
-        const ringColor = node.customColor || "green";
-        const label = getMoveLabel(realIndex, isWhiteStart);
-        
-        // Always draw the arrow with label (even if empty)
-        drawArrowWithLabel(node, arrowColor, ringColor, label);
-        
-        // Show count on arrow head if > 1
-        if (node.count.total > 1) {
-            drawHeadText(node.moveData.to, node.count.total);
-        }
-        
-        // Show possible move count on arrow head
-        if (node.children.length > 1) {
-            drawHeadText(node.moveData.to, node.children.length);
-        }
-    });
+    if (!node.analysis.quality && !node.analysis.attempted) {
+        node.analysis.analysisInProgress = true;
+        node.analysis.attempted = true;
+        analyzeMoveWithStockfish(node).then(() => {
+            node.analysis.analysisInProgress = false;
+        }).catch(() => {
+            node.analysis.inProgress = false;
+        });
+    }
+
+    const realIndex = startIndex + idx;
+    let arrowColor = node.customColor || "green";
+    let ringColor = node.customColor || "green";
+    let label = getMoveLabel(realIndex, isWhiteStart);
+
+    if (isAnalysisMode) {
+        const quality = node.analysis?.quality || "unknown";
+        if (quality === "best") { arrowColor = "darkblue"; ringColor = "darkblue"; }
+        else if (quality === "good") { arrowColor = "darkgreen"; ringColor = "darkgreen"; }
+        else if (quality === "bad") { arrowColor = "darkred"; ringColor = "darkred"; }
+    }
+
+    drawArrowWithLabel(node, arrowColor, ringColor, label);
+
+
+    if (node.count.total > 1) {
+        drawHeadText(node.moveData.to, node.count.total);
+    }
+    if (node.children.length > 1) {
+        drawHeadText(node.moveData.to, node.children.length);
+    }
+});
 
     if (!currentState.isCleanView) {
         currentState.currentNode.children.forEach((child, index) => {
-            const arrowColor = child.customColor || "yellow";
-            const label = (index + 1).toString();
-            drawArrowWithLabel(child, arrowColor, "yellow", label);
-            
-            // Show count on arrow head if > 1
-            if (child.count.total > 1) {
-                drawHeadText(child.moveData.to, child.count.total);
-            }
+    if (!child.analysis.quality && !child.analysis.analysisInProgress) {
+        child.analysis.analysisInProgress = true;
+        analyzeMoveWithStockfish(child).then(() => {
+            child.analysis.analysisInProgress = false;
+            renderBoardVisuals();
         });
     }
+
+    let arrowColor = child.customColor || "yellow";
+    let ringColor = child.customColor || "yellow";
+    let label = (index + 1).toString();
+
+    if (isAnalysisMode) {
+        const quality = child.analysis?.quality || "unknown";
+        if (quality === "best") { arrowColor = "darkblue"; ringColor = "darkblue"; }
+        else if (quality === "good") { arrowColor = "darkgreen"; ringColor = "darkgreen"; }
+        else if (quality === "bad") { arrowColor = "darkred"; ringColor = "darkred"; }
+    }
+
+    drawArrowWithLabel(child, arrowColor, ringColor, label);
+
+    if (child.count.total > 1) {
+        drawHeadText(child.moveData.to, child.count.total);
+    }
+});
+    }
 }
+
 function renderVirtualBoard() {
     const state = currentState.currentNode.boardState || {};
     const gridLayer = document.getElementById('grid-layer');
@@ -1361,11 +1547,19 @@ function drawArrowWithLabel(node, arrowColor, ringColor, labelText) {
     link.setAttribute("class", `link-line arrow-${arrowColor}`);
     linkLayer.appendChild(link);
 
-    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    circle.setAttribute("cx", labelX + "%");
-    circle.setAttribute("cy", labelY + "%");
-    circle.setAttribute("r", "3.5%");
-    circle.setAttribute("class", `move-ring ring-${ringColor}`);
+    // Determine ring color based on analysis quality
+let ringQualityColor = '';
+if (node.analysis?.quality === 'best') ringQualityColor = 'blue';
+else if (node.analysis?.quality === 'good') ringQualityColor = 'darkgreen';  
+else if (node.analysis?.quality === 'bad') ringQualityColor = 'red';
+
+const finalRingColor = ringQualityColor || ringColor;  // Fallback to manual color if unknown
+
+const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+circle.setAttribute("cx", labelX + "%");
+circle.setAttribute("cy", labelY + "%");
+circle.setAttribute("r", "3.5%");
+circle.setAttribute("class", `move-ring ring-${finalRingColor}`);
 
     circle.addEventListener('click', (e) => { 
         e.stopPropagation(); 
@@ -1391,7 +1585,9 @@ function drawArrowWithLabel(node, arrowColor, ringColor, labelText) {
     const textEl = document.createElementNS("http://www.w3.org/2000/svg", "text");
     textEl.setAttribute("x", labelX + "%");
     textEl.setAttribute("y", labelY + "%");
-    textEl.setAttribute("class", "arrow-number");
+   const baseClass = "arrow-number";
+    const qualityClass = node.analysis?.quality ? node.analysis.quality : '';
+    textEl.setAttribute("class", `${baseClass} ${qualityClass}`);
     textEl.setAttribute("pointer-events", "none");
     textEl.textContent = labelText;
     textLayer.appendChild(textEl);

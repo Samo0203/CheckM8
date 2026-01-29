@@ -41,6 +41,7 @@
 
 #btn-hint-toggle { background: #8e44ad; color: white; font-weight: bold; width: 100%; }
 #btn-hint-toggle.active { background: #2ecc71; }
+#btn-analysis-toggle { background: #8e44ad; color: white; font-weight: bold; width: 100%; }
 
 #position-stats {
     flex-shrink: 0;
@@ -107,4 +108,18 @@
     height: 100%;
 }
 
+.arrow-number.best {
+  fill: #3498db; /* Blue */
+}
 
+.arrow-number.good {
+  fill: #2ecc71; /* Green */
+}
+
+.arrow-number.bad {
+  fill: #e74c3c; /* Red */
+}
+
+.ring-darkblue { stroke: #1f3a93; }   /* Dark Blue for best */
+.ring-darkgreen { stroke: #217845; }  /* Dark Green for good */
+.ring-darkred { stroke: #8b0000; }    /* Dark Red for bad */

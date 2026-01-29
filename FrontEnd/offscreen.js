@@ -1,19 +1,62 @@
 console.log("♟️ Offscreen document loaded");
 
 let engineReady = false;
+let pendingResponse = null;
+let currentAnalysis = null;
 
-// In offscreen.js – replace the worker line
-const engine = new Worker(chrome.runtime.getURL("stockfish/stockfish.js"));
+const engine = new Worker(
+  chrome.runtime.getURL("stockfish/stockfish.js")
+);
 
+// Initialize Stockfish
 engine.postMessage("uci");
 
 engine.onmessage = (e) => {
   const line = e.data;
-  console.log("♟️ SF:", line);
+  // console.log("♟️ SF:", line);
 
   if (line === "uciok") {
     engineReady = true;
     console.log("✅ Stockfish ready");
+    return;
+  }
+
+  if (!currentAnalysis) return;
+
+  // Capture best move (MultiPV 1)
+  if (line.startsWith('info depth 13')) {  // or your depth
+  const multipvMatch = line.match(/multipv (\d+)/);
+  const scoreMatch = line.match(/score cp (-?\d+)/);
+  const pvMatch = line.match(/pv (\w{4})/);
+
+  if (multipvMatch && scoreMatch && pvMatch) {
+    const rank = parseInt(multipvMatch[1], 10);
+    const move = pvMatch[1];
+    const cp = parseInt(scoreMatch[1], 10);
+
+    if (rank === 1) {
+      currentAnalysis.bestMove = move;
+      currentAnalysis.bestScore = cp;
+    }
+
+    if (currentAnalysis.candidateMove === move) {
+      currentAnalysis.candidateRank = rank;
+      currentAnalysis.candidateScore = cp;
+    }
+  }
+}
+
+  // Finish analysis
+  if (line.startsWith("bestmove")) {
+    pendingResponse?.({
+      bestMove: currentAnalysis.bestMove,
+      bestScore: currentAnalysis.bestScore,
+      candidateRank: currentAnalysis.candidateRank,
+      candidateScore: currentAnalysis.candidateScore
+    });
+
+    pendingResponse = null;
+    currentAnalysis = null;
   }
 
   chrome.runtime.sendMessage({
@@ -29,34 +72,25 @@ engine.onerror = (err) => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "ANALYZE_FEN") {
     if (!engineReady) {
-      console.warn("⚠️ Stockfish not ready yet");
       sendResponse({ error: "Engine not ready" });
       return true;
     }
 
+    currentAnalysis = {
+      candidateMove: msg.move || null,
+      bestMove: null,
+      bestScore: null,
+      candidateRank: null,
+      candidateScore: null
+    };
+
+    pendingResponse = sendResponse;
+
     engine.postMessage("stop");
     engine.postMessage("position fen " + msg.fen);
-    engine.postMessage("setoption name MultiPV value 3");
-    engine.postMessage("go depth 15");
+    engine.postMessage("setoption name MultiPV value 7");
+    engine.postMessage("go depth 13");
 
-    let evalData = { bestMoves: [], scores: [] };
-    const listener = (e) => {
-      const line = e.data;
-      if (line.startsWith('info depth 15')) {
-        const multipvMatch = line.match(/multipv (\d+)/);
-        const scoreMatch = line.match(/score cp (-?\d+)/);
-        const pvMatch = line.match(/pv (\w{4})/);
-        if (multipvMatch && scoreMatch && pvMatch) {
-          const idx = parseInt(multipvMatch[1]) - 1;
-          evalData.bestMoves[idx] = pvMatch[1];
-          evalData.scores[idx] = parseInt(scoreMatch[1]);
-        }
-      } else if (line.startsWith('bestmove')) {
-        engine.onmessage = null;
-        sendResponse(evalData);
-      }
-    };
-    engine.onmessage = listener;
-    return true;
+    return true; // async response
   }
 });

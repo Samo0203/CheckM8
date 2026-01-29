@@ -3,22 +3,31 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ChckM8 Login</title>
+  <title>CheckM8 Login</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div class="container">
-    <h2>ChckM8</h2>
-    <input type="text" id="username" placeholder="Username">
-    <input type="password" id="password" placeholder="Password">
-    <button id="loginBtn">Login</button>
+    <h2>CheckM8</h2>
 
-    <div style="margin-top:10px;">
-      <button id="logoutBtn">Logout</button>
+    
+    <div id="loginForm">
+      <input type="text" id="username" placeholder="Username">
+      <input type="password" id="password" placeholder="Password">
+      <button id="loginBtn">Login</button>
+
+      <div id="guestLinks" style="margin-top:10px;">
+        <p><a href="signup.html">Sign Up</a> | <a href="reset.html">Forgot Password?</a></p>
+      </div>
     </div>
 
-    <p><a href="signup.html">Sign Up</a> | <a href="reset.html">Forgot Password?</a></p>
-    <p id="message"></p>
+   
+    <div id="loggedInView" style="display:none; text-align:center;">
+      <p id="usernameDisplay" style="margin:20px 0; font-size:15px; color:#333;"></p>
+      <button id="logoutBtn" style="width:95%;">Logout</button>
+    </div>
+
+    <p id="message" style="margin-top:15px; min-height:20px;"></p>
   </div>
 
   <script src="popup.js"></script>
