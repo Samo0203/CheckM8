@@ -1,9 +1,7 @@
 console.log("Lichess Arrow Navigator: Phase 55 (Position Repeats - Next Moves Stats)");
-
 // ==========================================
 // 0. AUTH & API HELPERS
 // ==========================================
-
 function getLoggedInUser() {
     return new Promise(resolve => {
         if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
@@ -16,7 +14,6 @@ function getLoggedInUser() {
         }
     });
 }
-
 async function proxyApiCall(endpoint, method, body) {
     return new Promise((resolve, reject) => {
         chrome.runtime.sendMessage({
@@ -38,14 +35,12 @@ async function proxyApiCall(endpoint, method, body) {
         });
     });
 }
-
 async function saveArrow(arrowData) {
     const user = await getLoggedInUser();
     if (!user) {
         console.log("User not logged in. Move added locally only.");
         return;
     }
-
     const payload = {
         from: arrowData.from,
         to: arrowData.to,
@@ -54,11 +49,9 @@ async function saveArrow(arrowData) {
         user: user,
         boardId: window.location.pathname.split('/').pop() || "default-board",
         variationID: 0,
-        analysis: arrowData.analysis || "unknown"   // ← now uses computed analysis
+        analysis: arrowData.analysis
     };
-
     console.log("Sending arrow payload:", payload);
-
     try {
         const response = await proxyApiCall("save-arrow", "POST", payload);
         console.log("Arrow saved successfully:", response);
@@ -66,15 +59,11 @@ async function saveArrow(arrowData) {
         console.error("Failed to save arrow:", err);
     }
 }
-
-
 async function loadRepeatCounts() {
     const user = await getLoggedInUser();
     if (!user) return;
-
     const res = await proxyApiCall(`get-all-move-counts/${user}`, "GET");
     if (!res?.success || !res.data) return;
-
     positionMoveCounts.clear();
     res.data.forEach(entry => {
         const key = entry.fen;
@@ -89,18 +78,15 @@ async function loadRepeatCounts() {
         });
     });
 }
-
 function getMoveRepeatCount(fen, from, to) {
     const moves = positionMoveCounts.get(fen);
     if (!moves) return { total: 0, possible: 0, mainline: 0 };
     return moves.get(from + to) || { total: 0, possible: 0, mainline: 0 };
 }
-
 // Helper function for zero padding
 function padZero(num) {
     return num < 10 ? `0${num}` : `${num}`;
 }
-
 // ==========================================
 // 1. DATA STRUCTURE (STATE BASED)
 // ==========================================
@@ -109,69 +95,57 @@ class MoveNode {
         this.id = id;
         this.parent = parent;
         this.children = [];
-        this.moveData = moveData; 
+        this.moveData = moveData;
         this.customColor = color;
         this.count = { total: 0, possible: 0, mainline: 0 };
         this.analysis = {
-    quality: null,   // "best" | "good" | "bad"
-    eval: null,      // centipawn
-    bestEval: null,  // centipawn
-    depth: null,
-    inProgress: false,
-    attempted: false
-};
-
+            quality: null,
+            eval: null,
+            bestEval: null,
+            depth: null,
+            inProgress: false,
+            attempted: false
+        };
         if (parent) {
             const preMoveState = parent.boardState;
-            const pieceCode = preMoveState[moveData.from] || ""; 
-            this.pieceType = getPieceTypeFromCode(pieceCode); 
-            
+            const pieceCode = preMoveState[moveData.from] || "";
+            this.pieceType = getPieceTypeFromCode(pieceCode);
+           
             const targetCode = preMoveState[moveData.to];
             const isCapture = !!targetCode;
             this.san = generateSan(this.pieceType, moveData.from, moveData.to, isCapture);
-            
+           
             this.boardState = applyMoveToState(preMoveState, moveData.from, moveData.to, pieceCode);
         } else {
             this.pieceType = null;
             this.san = "";
-            this.boardState = scanFullBoard(); 
+            this.boardState = scanFullBoard();
         }
     }
 }
-
 let rootNode = new MoveNode("root", null, null);
-
 let currentState = {
-    currentNode: rootNode, 
+    currentNode: rootNode,
     activeChild: null,
     isCleanView: false,
-    isHintMode: false 
+    isHintMode: false
 };
 let isAnalysisMode = false;
 let moveIdCounter = 0;
-const MOVES_PER_SCREEN = 8; 
-let initialBoardState = {}; 
+const MOVES_PER_SCREEN = 8;
+let initialBoardState = {};
 let isBoardScanned = false;
-
-// Repeat count cache: fen → move (from-to) → {total, possible, mainline}
 let positionMoveCounts = new Map();
-
-// Stats for current position only
 let currentPositionStats = null;
-
-// Track if we're in the process of saving
 let isSaving = false;
-
 // ==========================================
 // 2. STATE ENGINE HELPERS
 // ==========================================
-
 function getPieceTypeFromCode(code) {
     if (!code) return "";
     const type = code[1];
     return type === 'P' ? '' : type;
 }
-
 function generateSan(pieceType, from, to, isCapture) {
     if (pieceType === 'K') {
         const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
@@ -186,7 +160,6 @@ function generateSan(pieceType, from, to, isCapture) {
     }
     return pieceType + (isCapture ? 'x' : '') + to;
 }
-
 function applyMoveToState(oldState, from, to, pieceCode) {
     const newState = { ...oldState };
     delete newState[from];
@@ -199,7 +172,6 @@ function applyMoveToState(oldState, from, to, pieceCode) {
     }
     return newState;
 }
-
 function scanFullBoard() {
     const state = {};
     const board = document.querySelector('cg-board');
@@ -207,54 +179,50 @@ function scanFullBoard() {
     const boardRect = board.getBoundingClientRect();
     const isBlackOriented = document.querySelector('.cg-wrap')?.classList.contains('orientation-black');
     const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-    
+   
     document.querySelectorAll('piece').forEach(p => {
         const rect = p.getBoundingClientRect();
         const relX = (rect.left + rect.width/2 - boardRect.left) / boardRect.width;
         const relY = (rect.top + rect.height/2 - boardRect.top) / boardRect.height;
-        
+       
         let file, rank;
         if(isBlackOriented) {
             file = 7 - Math.floor(relX * 8);
-            rank = Math.floor(relY * 8); 
+            rank = Math.floor(relY * 8);
         } else {
             file = Math.floor(relX * 8);
             rank = 7 - Math.floor(relY * 8);
         }
-        
+       
         if (file >= 0 && file <= 7 && rank >= 0 && rank <= 7) {
             const square = files[file] + (rank + 1);
-            
+           
             const rawClass = (p.getAttribute('class') || "").toLowerCase();
             let bgUrl = "";
             try {
                 bgUrl = (window.getComputedStyle(p).backgroundImage || "").toLowerCase();
             } catch(e) {}
-
             let color = 'w';
             if (rawClass.includes('black') || rawClass.includes(' b ') || bgUrl.includes('bp') || bgUrl.includes('br') || bgUrl.includes('bn') || bgUrl.includes('bb') || bgUrl.includes('bq') || bgUrl.includes('bk')) {
                 color = 'b';
             }
-
             let type = 'P';
             if (rawClass.includes('rook') || rawClass.includes('role-r') || bgUrl.includes('wr.') || bgUrl.includes('br.') || bgUrl.includes('/r.') || bgUrl.includes('_r.')) type = 'R';
             else if (rawClass.includes('queen') || rawClass.includes('role-q') || bgUrl.includes('wq.') || bgUrl.includes('bq.') || bgUrl.includes('/q.') || bgUrl.includes('_q.')) type = 'Q';
             else if (rawClass.includes('king') || rawClass.includes('role-k') || bgUrl.includes('wk.') || bgUrl.includes('bk.') || bgUrl.includes('/k.') || bgUrl.includes('_k.')) type = 'K';
             else if (rawClass.includes('bishop') || rawClass.includes('role-b') || bgUrl.includes('wb.') || bgUrl.includes('bb.') || bgUrl.includes('/b.') || bgUrl.includes('_b.')) type = 'B';
             else if (rawClass.includes('knight') || rawClass.includes('role-n') || bgUrl.includes('wn.') || bgUrl.includes('bn.') || bgUrl.includes('/n.') || bgUrl.includes('_n.')) type = 'N';
-            
+           
             if (type === 'P') {
                 if (square === 'a8' || square === 'h8') { type = 'R'; color = 'b'; }
                 else if (square === 'a1' || square === 'h1') { type = 'R'; color = 'w'; }
             }
             if (square === 'd1') { type = 'Q'; color = 'w'; }
-
             state[square] = color + type;
         }
     });
     return state;
 }
-
 function assignRepeatCountsToTree(node = rootNode, fen = getCurrentFEN(rootNode)) {
     node.children.forEach(child => {
         const counts = getMoveRepeatCount(fen, child.moveData.from, child.moveData.to);
@@ -263,28 +231,19 @@ function assignRepeatCountsToTree(node = rootNode, fen = getCurrentFEN(rootNode)
         assignRepeatCountsToTree(child, nextFen);
     });
 }
-
 // ==========================================
 // STOCKFISH ARROW ANALYSIS
 // ==========================================
-
-// ==========================================
-// STOCKFISH ARROW ANALYSIS
-// ==========================================
-
-// Tree-based FEN generator – REQUIRED for stats, saving, navigation, and correct analysis
 function getCurrentFEN(node) {
     const pieces = node.boardState || {};
     const ranks = Array(8).fill(null).map(() => Array(8).fill(''));
-
     Object.entries(pieces).forEach(([sq, code]) => {
         const file = 'abcdefgh'.indexOf(sq[0]);
         const rank = 8 - parseInt(sq[1]);
         if (file >= 0 && rank >= 0 && file < 8 && rank < 8) {
-            ranks[rank][file] = code;  // code is like 'wP', 'bK'
+            ranks[rank][file] = code;
         }
     });
-
     let fen = '';
     for (let r = 0; r < 8; r++) {
         let empty = 0;
@@ -293,7 +252,7 @@ function getCurrentFEN(node) {
             if (code) {
                 if (empty) fen += empty;
                 empty = 0;
-                const type = code[1];  // 'P', 'K', etc.
+                const type = code[1];
                 fen += code[0] === 'w' ? type.toUpperCase() : type.toLowerCase();
             } else {
                 empty++;
@@ -302,97 +261,84 @@ function getCurrentFEN(node) {
         if (empty) fen += empty;
         if (r < 7) fen += '/';
     }
-
-    // Side to move based on path length (ply count)
     const path = getPathToCurrent();
     const ply = path.length;
     const sideToMove = ply % 2 === 0 ? 'w' : 'b';
-
     return fen + ` ${sideToMove} - - 0 1`;
 }
-
-// Correct Stockfish analysis – uses FEN from the position BEFORE the move (parent node)
 async function analyzeMoveWithStockfish(node) {
     const parentNode = node.parent || rootNode;
-    const fen = getCurrentFEN(parentNode);  // Accurate tree FEN
+    const fen = getCurrentFEN(parentNode);
     if (!fen || fen.includes('undefined') || fen.split(' ')[0].length < 10) {
         node.analysis.quality = 'unknown';
         renderBoardVisuals();
         renderNotationPanel();
         return;
     }
-
     const uci = node.moveData.from + node.moveData.to;
-
     let evalData;
     try {
         evalData = await new Promise((resolve, reject) => {
-  const timeout = setTimeout(() => reject(new Error("Analysis timeout")), 30000);  // ← 30 seconds
-  chrome.runtime.sendMessage({
-    type: "ANALYZE_MOVE",
-    fen: fen,
-    move: uci
-  }, response => {
-    clearTimeout(timeout);
-    if (chrome.runtime.lastError || response?.error) {
-      reject(response?.error || chrome.runtime.lastError);
-    } else {
-      resolve(response);
-    }
-  });
-});
+            const timeout = setTimeout(() => reject(new Error("Analysis timeout")), 30000);
+            chrome.runtime.sendMessage({
+                type: "ANALYZE_MOVE",
+                fen: fen,
+                move: uci
+            }, response => {
+                clearTimeout(timeout);
+                if (chrome.runtime.lastError || response?.error) {
+                    reject(response?.error || chrome.runtime.lastError);
+                } else {
+                    resolve(response);
+                }
+            });
+        });
     } catch (err) {
         console.warn("Stockfish analysis timed out for move:", uci, "in position:", fen);
         node.analysis.quality = 'unknown';
     }
-
     if (evalData) {
-  if (evalData.candidateRank !== null) {
-    if (evalData.candidateRank <= 3) {
-      node.analysis.quality = 'best';   // Top 3
-    } else if (evalData.candidateRank <= 6) {
-      node.analysis.quality = 'good';   // 4-6
+        if (evalData.candidateRank !== null) {
+            if (evalData.candidateRank <= 3) {
+                node.analysis.quality = 'best';
+            } else if (evalData.candidateRank <= 6) {
+                node.analysis.quality = 'good';
+            } else {
+                node.analysis.quality = 'bad';
+            }
+        } else {
+            node.analysis.quality = 'bad';
+        }
     } else {
-      node.analysis.quality = 'bad';
+        node.analysis.quality = 'unknown';
     }
-  } else {
-    node.analysis.quality = 'bad';  // Outside top 6
-  }
-} else {
-  node.analysis.quality = 'unknown';
-}
-
-    // Re-render and re-save with correct quality
     renderBoardVisuals();
     renderNotationPanel();
 
-    saveArrow({
-        from: node.moveData.from,
-        to: node.moveData.to,
-        color: node.customColor || 'green',
-        number: node.number,
-        analysis: node.analysis.quality
-    });
+    if (node.analysis.quality && node.analysis.quality !== 'unknown') {
+        saveArrow({
+            from: node.moveData.from,
+            to: node.moveData.to,
+            color: node.customColor || 'green',
+            number: node.number,
+            analysis: node.analysis.quality
+        });
+    }
 }
-
 // ==========================================
 // 3. POSITION REPEAT STATISTICS
 // ==========================================
-
 async function loadPositionStats(fen) {
     const user = await getLoggedInUser();
     if (!user) {
         console.log("No user logged in – cannot load stats");
         return null;
     }
-
     const encodedFen = encodeURIComponent(fen);
     console.log("Loading stats for FEN:", fen);
-
     try {
         const res = await proxyApiCall(`get-move-counts/${user}/${encodedFen}`, "GET");
         console.log("get-move-counts raw response:", res);
-
         let countsArray = res;
         if (res && res.success && Array.isArray(res.data)) {
             countsArray = res.data;
@@ -400,7 +346,6 @@ async function loadPositionStats(fen) {
             console.log("Unexpected response format:", res);
             return null;
         }
-
         if (countsArray.length === 0) {
             console.log("No moves found for this position");
             return {
@@ -408,17 +353,13 @@ async function loadPositionStats(fen) {
                 nextMoves: []
             };
         }
-
         const stats = {
             totalReaches: 0,
             nextMoves: []
         };
-
         countsArray.forEach(entry => {
             stats.totalReaches += (entry.count || 0) + (entry.possibleCount || 0) + (entry.mainlineCount || 0);
-            
             const total = (entry.count || 0) + (entry.possibleCount || 0) + (entry.mainlineCount || 0);
-            
             stats.nextMoves.push({
                 from: entry.from,
                 to: entry.to,
@@ -429,7 +370,6 @@ async function loadPositionStats(fen) {
                 isPossible: (entry.possibleCount || 0) > 0
             });
         });
-
         console.log("Parsed stats:", stats);
         return stats;
     } catch (err) {
@@ -437,58 +377,47 @@ async function loadPositionStats(fen) {
         return null;
     }
 }
-
 async function updateCurrentPositionStats() {
     const fen = getCurrentFEN(currentState.currentNode);
     currentPositionStats = await loadPositionStats(fen);
     renderNotationPanel();
 }
-
 async function incrementMoveCount(fen, from, to, type = 'mainline') {
     const user = await getLoggedInUser();
     if (!user) return;
-
-    const payload = { 
-        user, 
-        fen, 
-        from, 
+    const payload = {
+        user,
+        fen,
+        from,
         to,
         type: type
     };
-
     try {
         await proxyApiCall("increment-move-count", "POST", payload);
     } catch (err) {
         console.error("Failed to increment move count:", err);
     }
 }
-
 async function savePosition() {
-    if (isSaving) return; // Prevent multiple saves
+    if (isSaving) return;
     isSaving = true;
-    
+   
     const user = await getLoggedInUser();
     if (!user) {
         alert("Please login first.");
         isSaving = false;
         return;
     }
-
     const fen = getCurrentFEN(currentState.currentNode);
-
-    // FIX 1: Remove duplicate possible moves that are also mainline moves
-    // Group moves by from-to to identify duplicates
     const moveMap = new Map();
-    
+   
     function collectMoves(n = currentState.currentNode, currentFen = fen) {
         for (const child of n.children) {
             const moveKey = child.moveData.from + child.moveData.to;
             const existing = moveMap.get(moveKey);
-            
+           
             if (existing) {
-                // If we have both possible and mainline versions, keep only mainline
                 if (existing.type === 'possible' && child.customColor !== 'yellow') {
-                    // Replace possible with mainline
                     moveMap.set(moveKey, {
                         node: child,
                         fen: currentFen,
@@ -502,68 +431,58 @@ async function savePosition() {
                     type: child.customColor === 'yellow' ? 'possible' : 'mainline'
                 });
             }
-
             const nextFen = getCurrentFEN(child);
             collectMoves(child, nextFen);
         }
     }
-
     collectMoves();
-
-    // Save only unique moves (no duplicates)
     for (const [moveKey, moveInfo] of moveMap) {
         const { node, fen: moveFen, type } = moveInfo;
-        
+       
         await incrementMoveCount(moveFen, node.moveData.from, node.moveData.to, type);
-        
+       
         if (!positionMoveCounts.has(moveFen)) {
             positionMoveCounts.set(moveFen, new Map());
         }
         const movesMap = positionMoveCounts.get(moveFen);
         const currentCounts = movesMap.get(moveKey) || { total: 0, possible: 0, mainline: 0 };
-        
+       
         if (type === 'possible') {
             currentCounts.possible = (currentCounts.possible || 0) + 1;
         } else {
             currentCounts.mainline = (currentCounts.mainline || 0) + 1;
         }
         currentCounts.total = currentCounts.total + 1;
-        
+       
         movesMap.set(moveKey, currentCounts);
         node.count = currentCounts;
     }
-
-    // Update all node counts in the tree
     function updateTreeCounts(n = currentState.currentNode, currentFen = fen) {
         for (const child of n.children) {
             const moveKey = child.moveData.from + child.moveData.to;
             const counts = positionMoveCounts.get(currentFen)?.get(moveKey) || { total: 0, possible: 0, mainline: 0 };
             child.count = counts;
-            
+           
             const nextFen = getCurrentFEN(child);
             updateTreeCounts(child, nextFen);
         }
     }
-    
+   
     updateTreeCounts();
-
     await updateCurrentPositionStats();
-    
+   
     renderBoardVisuals();
     renderNotationPanel();
-
     alert("Position saved! Move counts and statistics have been updated.");
     isSaving = false;
 }
-
 // ==========================================
 // 4. UI SETUP
 // ==========================================
 let overlayElement = null;
 let svgCanvas = null;
 let lastClickTime = 0;
-const CLICK_DELAY = 300; // ms delay between clicks
-
+const CLICK_DELAY = 300;
 setInterval(() => {
     const board = document.querySelector('cg-board');
     if (board) {
@@ -581,15 +500,14 @@ setInterval(() => {
         }
     }
 }, 500);
-
 function createFloatingOverlay() {
     overlayElement = document.createElement('div');
     overlayElement.id = 'arrow-extension-overlay';
     overlayElement.style.position = 'fixed';
     overlayElement.style.zIndex = '9999';
     overlayElement.style.pointerEvents = 'auto';
-    overlayElement.style.backgroundColor = 'transparent'; 
-    
+    overlayElement.style.backgroundColor = 'transparent';
+   
     const style = document.createElement('style');
     style.innerHTML = `
         .grid-square { fill: none; stroke: white; stroke-width: 2px; opacity: 0.6; pointer-events: none; }
@@ -612,15 +530,21 @@ function createFloatingOverlay() {
         .ring-blue { stroke: #3498db; }
         .ring-red { stroke: #e74c3c; }
         .ring-orange { stroke: #e67e22; }
-        .arrow-number { 
-            font-size: 14px; 
-            fill: white; 
-            font-weight: bold; 
-            text-shadow: 1px 1px 2px black; 
+        .ring-darkblue { stroke: #1f3a93; }
+        .ring-darkgreen { stroke: #217845; }
+        .ring-darkred { stroke: #8b0000; }
+        .arrow-number {
+            font-size: 14px;
+            fill: white;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px black;
             pointer-events: none;
             user-select: none;
             -webkit-user-select: none;
         }
+        .arrow-number.best { fill: #3498db; }
+        .arrow-number.good { fill: #2ecc71; }
+        .arrow-number.bad { fill: #e74c3c; }
         .head-count { font-size: 12px; fill: white; font-weight: bold; text-shadow: 1px 1px 2px black; pointer-events: none; text-anchor: middle; }
         .project-btn { width: 45%; font-size: 10px; background: #333; color: white; border: 1px solid #555; cursor: pointer; margin-top: 5px; padding: 4px; }
         .project-btn:hover { background: #555; }
@@ -628,23 +552,18 @@ function createFloatingOverlay() {
         .nav-btn:hover { background: #555; }
         .nav-btn:disabled { background: #222; color: #666; cursor: not-allowed; }
         .btn-row { display: flex; justify-content: space-between; margin: 2px 0; }
-        #nav-input { width: 100%; margin: 5px 0; padding: 4px; background: #222; color: white; border: 1px solid #444; }
         #move-list { margin-top: 10px; max-height: 200px; overflow-y: auto; font-size: 12px; }
         .notation-line { padding: 2px 5px; margin: 1px 0; border-radius: 3px; }
         .notation-turn { color: #888; margin-right: 5px; }
         .notation-move { cursor: pointer; }
         .notation-active { background: #2ecc71; color: white !important; padding: 0 5px; border-radius: 3px; }
-        .variation-container { color: #666; margin-left: 5px; }
-        .variation-link { color: #3498db; cursor: pointer; margin-left: 3px; }
-        .variation-link:hover { text-decoration: underline; }
         .possible-move { color: #f1c40f; }
         .mainline-move { color: #2ecc71; }
     `;
     document.head.appendChild(style);
-
     const controls = document.createElement('div');
     controls.id = 'arrow-controls';
-    
+   
     controls.innerHTML = `
         <div id="status-text" style="color:#aaa; font-size:11px; text-align:center;">Screen 1</div>
         <button id="btn-hint-toggle" class="nav-btn" style="margin-bottom:5px;">Show Hint Board</button>
@@ -657,24 +576,18 @@ function createFloatingOverlay() {
              <button id="btn-prev" class="nav-btn">&lt;</button>
             <button id="btn-next" class="nav-btn">&gt;</button>
         </div>
-        <input type="text" id="nav-input" placeholder="Jump (e.g. 1.1, 2.1)">
-        
+       
         <div class="btn-row" style="margin-top:5px; border-top:1px solid #444; padding-top:5px;">
             <button id="btn-save-position" class="project-btn">Save Position</button>
             <button id="btn-save-proj" class="project-btn">Save File</button>
             <button id="btn-load-proj" class="project-btn">Load File</button>
         </div>
-
         <div id="notation-panel">
-    <div id="position-stats"></div>   <!-- FIXED -->
-    <div id="move-list"></div>        <!-- SCROLL -->
-    </div>
-
+            <div id="position-stats"></div>
+            <div id="move-list"></div>
+        </div>
     `;
     controls.addEventListener('mousedown', e => e.stopPropagation());
-    controls.addEventListener('input', (e) => {
-        if(e.target.id === 'nav-input') handleNavigationInput(e.target.value);
-    });
     controls.querySelector('#btn-prev').addEventListener('click', stepBack);
     controls.querySelector('#btn-next').addEventListener('click', stepForward);
     controls.querySelector('#btn-screen-prev').addEventListener('click', prevScreen);
@@ -683,18 +596,15 @@ function createFloatingOverlay() {
     controls.querySelector('#btn-save-position').addEventListener('click', savePosition);
     controls.querySelector('#btn-save-proj').addEventListener('click', saveProjectToFile);
     controls.querySelector('#btn-load-proj').addEventListener('click', loadProjectFromFile);
-
     controls.querySelector('#btn-analysis-toggle').addEventListener('click', () => {
-    isAnalysisMode = !isAnalysisMode;
-    const btn = document.getElementById('btn-analysis-toggle');
-    btn.classList.toggle('active', isAnalysisMode);
-    renderBoardVisuals(); // refresh arrows with/without analysis
-});
-
+        isAnalysisMode = !isAnalysisMode;
+        const btn = document.getElementById('btn-analysis-toggle');
+        btn.classList.toggle('active', isAnalysisMode);
+        renderBoardVisuals();
+    });
     const svgContainer = document.createElement('div');
     svgContainer.style.width = '100%';
     svgContainer.style.height = '100%';
-
     svgContainer.innerHTML = `
         <svg id="arrow-canvas" style="width:100%; height:100%;">
             <defs>
@@ -708,24 +618,22 @@ function createFloatingOverlay() {
                 </marker>
             </defs>
             <rect id="board-dimmer" class="board-blur" width="100%" height="100%" style="display:none;"></rect>
-            <g id="grid-layer" style="display:none;"></g> 
-            <g id="ghost-layer" style="display:none;"></g> 
+            <g id="grid-layer" style="display:none;"></g>
+            <g id="ghost-layer" style="display:none;"></g>
             <g id="arrows-layer"></g>
             <g id="links-layer"></g>
             <g id="rings-layer"></g>
             <g id="text-layer"></g>
         </svg>
     `;
-
     overlayElement.appendChild(controls);
     overlayElement.appendChild(svgContainer);
     document.body.appendChild(overlayElement);
     svgCanvas = document.getElementById('arrow-canvas');
     setupMouseInteractions(overlayElement);
-    renderBoardVisuals(); 
+    renderBoardVisuals();
     renderNotationPanel();
 }
-
 function createMarker(name, color) {
     return `
         <marker id="arrowhead-${name}" markerWidth="4" markerHeight="4" refX="3" refY="2" orient="auto">
@@ -733,7 +641,6 @@ function createMarker(name, color) {
         </marker>
     `;
 }
-
 function updateOverlayPosition(board) {
     if (!overlayElement) return;
     const rect = board.getBoundingClientRect();
@@ -745,83 +652,54 @@ function updateOverlayPosition(board) {
         overlayElement.style.height = rect.height + 'px';
     }
 }
-
 // ==========================================
 // 5. NAVIGATION LOGIC
 // ==========================================
-
 async function addMove(startSquare, endSquare, modifiers = { alt: false, shift: false }) {
-  // Fixed variable names (use startSquare/endSquare consistently – assuming "from/to" was a copy-paste error)
-  const from = startSquare;
-  const to = endSquare;
-  const move = from + to;
-
-  const now = Date.now();
-  if (now - lastClickTime < CLICK_DELAY) return; // Prevent rapid clicks
-  lastClickTime = now;
-  
-  currentState.isCleanView = false;
-
-  // Toggle logic: remove if already exists
-  const existingIndex = currentState.currentNode.children.findIndex(
-      child => child.moveData.from === from && child.moveData.to === to
-  );
-  if (existingIndex > -1) {
-      currentState.currentNode.children.splice(existingIndex, 1);
-  } else {
-      moveIdCounter++;
-      let color = null;
-      if (modifiers.alt && modifiers.shift) color = 'orange';
-      else if (modifiers.alt) color = 'blue';
-      else if (modifiers.shift) color = 'red';
-      
-      const newNode = new MoveNode(
-          `move_${moveIdCounter}`,
-          currentState.currentNode,
-          { from, to },
-          color
-      );
-
-      // Initialize analysis state on the node
-      newNode.analysis = newNode.analysis || {};
-      newNode.analysis.quality = null;      // null = not analyzed yet
-      newNode.analysis.inProgress = false;
-
-      // Store the number on the node so we can re-use it when updating analysis later
-      newNode.number = moveIdCounter;
-
-      // 🔥 TRIGGER ANALYSIS HERE (only if not already done/in progress)
-      if (!newNode.analysis.quality && !newNode.analysis.attempted) {
-          newNode.analysis.attempted = true;
-          newNode.analysis.inProgress = true;
-          analyzeMoveWithStockfish(newNode)
-              .finally(() => {
-                  newNode.analysis.inProgress = false;
-              })
-              .catch(() => {
-            newNode.analysis.inProgress = false;
-              });
-      }
-
-      newNode.count = { total: 0, possible: 0, mainline: 0 };
-      
-      currentState.currentNode.children.push(newNode);
-      
-      // Initial save with "unknown" (visual appears immediately)
-      saveArrow({
-          from: from,
-          to: to,
-          color: color || 'green',
-          number: newNode.number,
-          analysis: newNode.analysis.quality || 'unknown'
-      });
-  }
-
-  await updateCurrentPositionStats();
-  renderBoardVisuals();
-  renderNotationPanel();
+    const from = startSquare;
+    const to = endSquare;
+    const now = Date.now();
+    if (now - lastClickTime < CLICK_DELAY) return;
+    lastClickTime = now;
+ 
+    currentState.isCleanView = false;
+    const existingIndex = currentState.currentNode.children.findIndex(
+        child => child.moveData.from === from && child.moveData.to === to
+    );
+    if (existingIndex > -1) {
+        currentState.currentNode.children.splice(existingIndex, 1);
+    } else {
+        moveIdCounter++;
+        let color = null;
+        if (modifiers.alt && modifiers.shift) color = 'orange';
+        else if (modifiers.alt) color = 'blue';
+        else if (modifiers.shift) color = 'red';
+     
+        const newNode = new MoveNode(
+            `move_${moveIdCounter}`,
+            currentState.currentNode,
+            { from, to },
+            color
+        );
+        newNode.analysis.quality = null;
+        newNode.analysis.inProgress = false;
+        newNode.number = moveIdCounter;
+        if (!newNode.analysis.quality && !newNode.analysis.attempted) {
+            newNode.analysis.attempted = true;
+            newNode.analysis.inProgress = true;
+            analyzeMoveWithStockfish(newNode)
+                .finally(() => {
+                    newNode.analysis.inProgress = false;
+                });
+        }
+        newNode.count = { total: 0, possible: 0, mainline: 0 };
+     
+        currentState.currentNode.children.push(newNode);
+    }
+    await updateCurrentPositionStats();
+    renderBoardVisuals();
+    renderNotationPanel();
 }
-
 function toggleHintMode() {
     currentState.isHintMode = !currentState.isHintMode;
     const btn = document.getElementById('btn-hint-toggle');
@@ -829,23 +707,19 @@ function toggleHintMode() {
         btn.textContent = currentState.isHintMode ? "Hide Hint Board" : "Show Hint Board";
         btn.classList.toggle('active', currentState.isHintMode);
     }
-    
-    // Reset screen navigation when toggling hint mode
     if (!currentState.isHintMode) {
         const currentPath = getPathToCurrent();
         const currentLen = currentPath.length;
         const currentScreenIdx = Math.floor(Math.max(0, currentLen - 1) / MOVES_PER_SCREEN);
         document.getElementById('status-text').innerText = `Screen ${currentScreenIdx + 1}`;
     }
-    
     renderBoardVisuals();
 }
-
 function handleRingClick(node, clickType, modifiers) {
     const now = Date.now();
-    if (now - lastClickTime < CLICK_DELAY) return; // Prevent rapid clicks
+    if (now - lastClickTime < CLICK_DELAY) return;
     lastClickTime = now;
-    
+   
     if (modifiers.alt || modifiers.shift) {
         if (modifiers.alt && modifiers.shift) node.customColor = 'orange';
         else if (modifiers.alt) node.customColor = 'blue';
@@ -854,14 +728,13 @@ function handleRingClick(node, clickType, modifiers) {
         renderNotationPanel();
         return;
     }
-
     if (clickType === 'single') {
         currentState.isCleanView = false;
         if (currentState.currentNode === node) {
-             stepBack();
+            stepBack();
         } else {
-             currentState.currentNode = node;
-             currentState.activeChild = null; 
+            currentState.currentNode = node;
+            currentState.activeChild = null;
         }
     } else if (clickType === 'double') {
         currentState.isCleanView = !currentState.isCleanView;
@@ -869,17 +742,15 @@ function handleRingClick(node, clickType, modifiers) {
     renderBoardVisuals();
     renderNotationPanel();
 }
-
 function stepBack() {
     if (currentState.currentNode.parent) {
         currentState.currentNode = currentState.currentNode.parent;
         currentState.activeChild = null;
     }
     updateCurrentPositionStats();
-    renderBoardVisuals(); 
+    renderBoardVisuals();
     renderNotationPanel();
 }
-
 function stepForward() {
     if (currentState.currentNode.children.length > 0) {
         currentState.currentNode = currentState.currentNode.children[0];
@@ -889,14 +760,12 @@ function stepForward() {
     renderBoardVisuals();
     renderNotationPanel();
 }
-
 function prevScreen() {
-    // If in hint mode, exit hint mode first
     if (currentState.isHintMode) {
         currentState.isHintMode = false;
         document.getElementById('btn-hint-toggle').textContent = "Show Hint Board";
     }
-    
+   
     const path = getPathToCurrent();
     const currentScreenIdx = Math.floor(Math.max(0, path.length - 1) / MOVES_PER_SCREEN);
     if (currentScreenIdx > 0) {
@@ -913,14 +782,12 @@ function prevScreen() {
     renderBoardVisuals();
     renderNotationPanel();
 }
-
 function nextScreen() {
-    // If in hint mode, exit hint mode first
     if (currentState.isHintMode) {
         currentState.isHintMode = false;
         document.getElementById('btn-hint-toggle').textContent = "Show Hint Board";
     }
-    
+   
     let temp = currentState.currentNode;
     let limit = MOVES_PER_SCREEN;
     while(temp.children.length > 0 && limit > 0) {
@@ -932,166 +799,102 @@ function nextScreen() {
     renderBoardVisuals();
     renderNotationPanel();
 }
-
-function handleNavigationInput(text) {
-    if (!text) return;
-    const parts = text.split(/[,]+/).map(s => s.trim()).filter(s => s !== "");
-    const commandQueues = {};
-    let maxRequestedMove = 0;
-    for (let part of parts) {
-        const split = part.split('.').map(s => s.trim());
-        if (split.length >= 2) {
-            const moveNum = parseInt(split[0]);
-            const option = parseInt(split[1]);
-            if (!isNaN(moveNum) && !isNaN(option) && option > 0) {
-                if (!commandQueues[moveNum]) commandQueues[moveNum] = [];
-                commandQueues[moveNum].push(option - 1); 
-                if (moveNum > maxRequestedMove) maxRequestedMove = moveNum;
-            }
-        }
-    }
-    
-    let tempNode = rootNode;
-    let moveCounter = 1;
-    let isWhiteTurn = true;
-    
-    while (tempNode.children.length > 0) {
-        let nextIndex = 0;
-        let hasCommand = false;
-
-        if (commandQueues[moveCounter] && commandQueues[moveCounter].length > 0) {
-            nextIndex = commandQueues[moveCounter].shift();
-            hasCommand = true;
-        }
-        
-        if (!hasCommand && moveCounter > maxRequestedMove && tempNode.children.length > 1) {
-            break;
-        }
-
-        if (tempNode.children[nextIndex]) {
-            tempNode = tempNode.children[nextIndex];
-        } else {
-            break;
-        }
-        
-        if (!isWhiteTurn) moveCounter++;
-        isWhiteTurn = !isWhiteTurn;
-    }
-    
-    currentState.currentNode = tempNode;
-    updateCurrentPositionStats();
-    renderBoardVisuals();
-    renderNotationPanel();
-}
-
 function getPathToCurrent() {
     let path = [];
     let temp = currentState.currentNode;
     while(temp.parent) {
-        path.unshift(temp); 
+        path.unshift(temp);
         temp = temp.parent;
     }
     return path;
 }
-
 // ==========================================
 // 6. SERIALIZATION & FILE LOGIC
 // ==========================================
-
 function serializeTree(node) {
     return {
         id: node.id,
-        moveData: node.moveData, 
+        moveData: node.moveData,
         customColor: node.customColor,
         count: node.count,
         children: node.children.map(child => serializeTree(child))
     };
 }
-
-let targetNodeForResume = null; 
+let targetNodeForResume = null;
 function rebuildTree(data, parentNode, targetId) {
     data.children.forEach(childData => {
         const newNode = new MoveNode(
-            childData.id, 
-            parentNode, 
-            childData.moveData, 
+            childData.id,
+            parentNode,
+            childData.moveData,
             childData.customColor
         );
         newNode.count = childData.count || { total: 0, possible: 0, mainline: 0 };
         parentNode.children.push(newNode);
-
         if (newNode.id === targetId) {
             targetNodeForResume = newNode;
         }
-
         rebuildTree(childData, newNode, targetId);
     });
 }
-
 function saveProjectToFile() {
     const dataToSave = {
         tree: serializeTree(rootNode),
-        currentId: currentState.currentNode.id, 
+        currentId: currentState.currentNode.id,
         maxId: moveIdCounter,
         savedAt: Date.now()
     };
-    
+   
     const jsonString = JSON.stringify(dataToSave, null, 2);
     const blob = new Blob([jsonString], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    
+   
     const a = document.createElement('a');
     a.href = url;
     a.download = `lichess_arrows_${Date.now()}.json`;
     document.body.appendChild(a);
     a.click();
-    
+   
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-
     console.log("Project File Downloaded!");
     const btn = document.getElementById('btn-save-proj');
     const originalText = btn.innerText;
     btn.innerText = "Downloaded!";
     setTimeout(() => btn.innerText = originalText, 1500);
 }
-
 function loadProjectFromFile() {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json';
-    
+   
     input.onchange = e => {
         const file = e.target.files[0];
         if (!file) return;
-
         const reader = new FileReader();
         reader.onload = event => {
             try {
                 const jsonString = event.target.result;
                 const data = JSON.parse(jsonString);
-
-                rootNode = new MoveNode("root", null, null); 
-                
+                rootNode = new MoveNode("root", null, null);
+               
                 moveIdCounter = data.maxId || 0;
-                targetNodeForResume = rootNode; 
-                
+                targetNodeForResume = rootNode;
+               
                 rebuildTree(data.tree, rootNode, data.currentId);
-                
+               
                 currentState.currentNode = targetNodeForResume;
                 currentState.activeChild = null;
                 currentState.isCleanView = false;
-
                 renderBoardVisuals();
                 renderNotationPanel();
-                
+               
                 console.log("Project Loaded from File! Resumed at " + currentState.currentNode.id);
-                
+               
                 const btn = document.getElementById('btn-load-proj');
                 const originalText = btn.innerText;
                 btn.innerText = "Loaded!";
                 setTimeout(() => btn.innerText = originalText, 1500);
-
             } catch (err) {
                 console.error("Error parsing JSON file:", err);
                 alert("Invalid project file.");
@@ -1099,11 +902,9 @@ function loadProjectFromFile() {
         };
         reader.readAsText(file);
     };
-    
+   
     input.click();
 }
-
-
 function renderBoardVisuals() {
     if (!svgCanvas) return;
     ['arrows-layer', 'links-layer', 'rings-layer', 'text-layer', 'ghost-layer', 'grid-layer'].forEach(id => {
@@ -1113,36 +914,23 @@ function renderBoardVisuals() {
     const dimmer = document.getElementById('board-dimmer');
     const ghostLayer = document.getElementById('ghost-layer');
     const gridLayer = document.getElementById('grid-layer');
-
     if (currentState.isHintMode) {
         dimmer.style.display = 'block';
         if (ghostLayer) ghostLayer.style.display = 'block';
         if (gridLayer) gridLayer.style.display = 'block';
-
         renderVirtualBoard();
-
         const currentPath = getPathToCurrent();
         if (currentPath.length > 0) {
             const lastNode = currentPath[currentPath.length - 1];
             if (lastNode) {
-                // 🔧 Apply analysis coloring if enabled
-                const quality = lastNode.analysis?.quality || "unknown";
-                let ringColor = lastNode.customColor || "green";
                 let arrowColor = lastNode.customColor || "green";
-
+                let ringColor = lastNode.customColor || "green";
                 if (isAnalysisMode) {
-                    if (quality === "best") {
-                        ringColor = "darkblue";
-                        arrowColor = "darkblue";
-                    } else if (quality === "good") {
-                        ringColor = "darkgreen";
-                        arrowColor = "darkgreen";
-                    } else if (quality === "bad") {
-                        ringColor = "darkred";
-                        arrowColor = "darkred";
-                    }
+                    const quality = lastNode.analysis?.quality || "unknown";
+                    if (quality === "best") { arrowColor = "blue"; ringColor = "darkblue"; }
+                    else if (quality === "good") { arrowColor = "green"; ringColor = "darkgreen"; }
+                    else if (quality === "bad") { arrowColor = "red"; ringColor = "darkred"; }
                 }
-
                 let isWhiteStart = true;
                 if (currentPath.length > 0) {
                     const rank = parseInt(currentPath[0].moveData.from.slice(1));
@@ -1150,133 +938,105 @@ function renderBoardVisuals() {
                 }
                 const fullIndex = currentPath.length - 1;
                 const label = getMoveLabel(fullIndex, isWhiteStart);
-
                 drawArrowWithLabel(lastNode, arrowColor, ringColor, label);
             }
         }
-
         if (!currentState.isCleanView) {
             currentState.currentNode.children.forEach((child, index) => {
-    if (!child.analysis.quality && !child.analysis.attempted) {
-        child.analysis.attempted = true;
-        child.analysis.analysisInProgress = true;
-        analyzeMoveWithStockfish(child).then(() => {
-            child.analysis.analysisInProgress = false;
-        }).catch(() => {
-            child.analysis.inProgress = false;
-        });
-    }
-
-    let arrowColor = child.customColor || "yellow";
-    let ringColor = child.customColor || "yellow";
-    let label = (index + 1).toString();
-
-    if (isAnalysisMode) {
-        const quality = child.analysis?.quality || "unknown";
-        if (quality === "best") { arrowColor = "darkblue"; ringColor = "darkblue"; }
-        else if (quality === "good") { arrowColor = "darkgreen"; ringColor = "darkgreen"; }
-        else if (quality === "bad") { arrowColor = "darkred"; ringColor = "darkred"; }
-    }
-
-    drawArrowWithLabel(child, arrowColor, ringColor, label);
-
-    if (child.children.length > 1) {
-        drawHeadText(child.moveData.to, child.children.length);
-    }
-});
+                if (!child.analysis.quality && !child.analysis.attempted) {
+                    child.analysis.attempted = true;
+                    child.analysis.inProgress = true;
+                    analyzeMoveWithStockfish(child).finally(() => {
+                        child.analysis.inProgress = false;
+                    });
+                }
+                let arrowColor = child.customColor || "yellow";
+                let ringColor = child.customColor || "yellow";
+                let label = (index + 1).toString();
+                if (isAnalysisMode) {
+                    const quality = child.analysis?.quality || "unknown";
+                    if (quality === "best") { arrowColor = "blue"; ringColor = "darkblue"; }
+                    else if (quality === "good") { arrowColor = "green"; ringColor = "darkgreen"; }
+                    else if (quality === "bad") { arrowColor = "red"; ringColor = "darkred"; }
+                }
+                drawArrowWithLabel(child, arrowColor, ringColor, label);
+                if (child.children.length > 1) {
+                    drawHeadText(child.moveData.to, child.children.length);
+                }
+            });
         }
         return;
     }
-
-    // NORMAL MODE
     dimmer.style.display = 'none';
     if (ghostLayer) ghostLayer.style.display = 'none';
     if (gridLayer) gridLayer.style.display = 'none';
-
     const currentPath = getPathToCurrent();
     const currentLen = currentPath.length;
     const currentScreenIdx = Math.floor(Math.max(0, currentLen - 1) / MOVES_PER_SCREEN);
     const startIndex = currentScreenIdx * MOVES_PER_SCREEN;
     const endIndex = startIndex + MOVES_PER_SCREEN;
     const visiblePath = currentPath.slice(startIndex, endIndex);
-
     document.getElementById('status-text').innerText = `Screen ${currentScreenIdx + 1}`;
     document.getElementById('btn-screen-prev').disabled = (currentScreenIdx === 0);
-
     if (currentScreenIdx > 0 && currentPath[startIndex - 1]) {
         drawArrowWithLabel(currentPath[startIndex - 1], "ghost", "ghost", "");
     }
-
     let isWhiteStart = true;
     if (currentPath.length > 0) {
         const rank = parseInt(currentPath[0].moveData.from.slice(1));
         if (rank > 4) isWhiteStart = false;
     }
-
     visiblePath.forEach((node, idx) => {
-    if (!node.analysis.quality && !node.analysis.attempted) {
-        node.analysis.analysisInProgress = true;
-        node.analysis.attempted = true;
-        analyzeMoveWithStockfish(node).then(() => {
-            node.analysis.analysisInProgress = false;
-        }).catch(() => {
-            node.analysis.inProgress = false;
-        });
-    }
-
-    const realIndex = startIndex + idx;
-    let arrowColor = node.customColor || "green";
-    let ringColor = node.customColor || "green";
-    let label = getMoveLabel(realIndex, isWhiteStart);
-
-    if (isAnalysisMode) {
-        const quality = node.analysis?.quality || "unknown";
-        if (quality === "best") { arrowColor = "darkblue"; ringColor = "darkblue"; }
-        else if (quality === "good") { arrowColor = "darkgreen"; ringColor = "darkgreen"; }
-        else if (quality === "bad") { arrowColor = "darkred"; ringColor = "darkred"; }
-    }
-
-    drawArrowWithLabel(node, arrowColor, ringColor, label);
-
-
-    if (node.count.total > 1) {
-        drawHeadText(node.moveData.to, node.count.total);
-    }
-    if (node.children.length > 1) {
-        drawHeadText(node.moveData.to, node.children.length);
-    }
-});
-
+        if (!node.analysis.quality && !node.analysis.attempted) {
+            node.analysis.attempted = true;
+            node.analysis.inProgress = true;
+            analyzeMoveWithStockfish(node).finally(() => {
+                node.analysis.inProgress = false;
+            });
+        }
+        const realIndex = startIndex + idx;
+        let arrowColor = node.customColor || "green";
+        let ringColor = node.customColor || "green";
+        let label = getMoveLabel(realIndex, isWhiteStart);
+        if (isAnalysisMode) {
+            const quality = node.analysis?.quality || "unknown";
+            if (quality === "best") { arrowColor = "blue"; ringColor = "darkblue"; }
+            else if (quality === "good") { arrowColor = "green"; ringColor = "darkgreen"; }
+            else if (quality === "bad") { arrowColor = "red"; ringColor = "darkred"; }
+        }
+        drawArrowWithLabel(node, arrowColor, ringColor, label);
+        if (node.count.total > 1) {
+            drawHeadText(node.moveData.to, node.count.total);
+        }
+        if (node.children.length > 1) {
+            drawHeadText(node.moveData.to, node.children.length);
+        }
+    });
     if (!currentState.isCleanView) {
         currentState.currentNode.children.forEach((child, index) => {
-    if (!child.analysis.quality && !child.analysis.analysisInProgress) {
-        child.analysis.analysisInProgress = true;
-        analyzeMoveWithStockfish(child).then(() => {
-            child.analysis.analysisInProgress = false;
-            renderBoardVisuals();
+            if (!child.analysis.quality && !child.analysis.inProgress) {
+                child.analysis.inProgress = true;
+                analyzeMoveWithStockfish(child).finally(() => {
+                    child.analysis.inProgress = false;
+                    renderBoardVisuals();
+                });
+            }
+            let arrowColor = child.customColor || "yellow";
+            let ringColor = child.customColor || "yellow";
+            let label = (index + 1).toString();
+            if (isAnalysisMode) {
+                const quality = child.analysis?.quality || "unknown";
+                if (quality === "best") { arrowColor = "blue"; ringColor = "darkblue"; }
+                else if (quality === "good") { arrowColor = "green"; ringColor = "darkgreen"; }
+                else if (quality === "bad") { arrowColor = "red"; ringColor = "darkred"; }
+            }
+            drawArrowWithLabel(child, arrowColor, ringColor, label);
+            if (child.count.total > 1) {
+                drawHeadText(child.moveData.to, child.count.total);
+            }
         });
     }
-
-    let arrowColor = child.customColor || "yellow";
-    let ringColor = child.customColor || "yellow";
-    let label = (index + 1).toString();
-
-    if (isAnalysisMode) {
-        const quality = child.analysis?.quality || "unknown";
-        if (quality === "best") { arrowColor = "darkblue"; ringColor = "darkblue"; }
-        else if (quality === "good") { arrowColor = "darkgreen"; ringColor = "darkgreen"; }
-        else if (quality === "bad") { arrowColor = "darkred"; ringColor = "darkred"; }
-    }
-
-    drawArrowWithLabel(child, arrowColor, ringColor, label);
-
-    if (child.count.total > 1) {
-        drawHeadText(child.moveData.to, child.count.total);
-    }
-});
-    }
 }
-
 function renderVirtualBoard() {
     const state = currentState.currentNode.boardState || {};
     const gridLayer = document.getElementById('grid-layer');
@@ -1293,7 +1053,7 @@ function renderVirtualBoard() {
             }
         }
     }
-    
+   
     const glyphs = {
         'wK': '♔', 'wQ': '♕', 'wR': '♖', 'wB': '♗', 'wN': '♘', 'wP': '♙',
         'bK': '♚', 'bQ': '♛', 'bR': '♜', 'bB': '♝', 'bN': '♞', 'bP': '♟'
@@ -1306,7 +1066,6 @@ function renderVirtualBoard() {
         }
     });
 }
-
 function drawGhostPiece(square, char, colorClass) {
     const container = document.getElementById('ghost-layer');
     const center = getSquareCenter(square);
@@ -1317,33 +1076,24 @@ function drawGhostPiece(square, char, colorClass) {
     textEl.textContent = char;
     container.appendChild(textEl);
 }
-
 function getMoveLabel(index, isWhiteStart) {
     if (isWhiteStart) {
-        if (index === 0) return "1W"; // Keep "1W" for white's first move
+        if (index === 0) return "1W";
         return (Math.floor(index / 2) + 1).toString();
     } else {
-        if (index === 0) return "1B"; // Keep "1B" for black's first move if starting
+        if (index === 0) return "1B";
         return (Math.floor((index + 1) / 2)).toString();
     }
 }
-
 // ==========================================
 // 8. RENDER NOTATION PANEL
 // ==========================================
-
 function renderNotationPanel() {
     const statsContainer = document.getElementById('position-stats');
     const moveContainer = document.getElementById('move-list');
-
     if (!statsContainer || !moveContainer) return;
-
     statsContainer.innerHTML = '';
     moveContainer.innerHTML = '';
-
-    // ============================================================
-    // 1. FIXED TOP STATS SECTION (Position Statistics)
-    // ============================================================
     if (currentPositionStats) {
         const statsDiv = document.createElement('div');
         statsDiv.style.color = '#ffeb3b';
@@ -1351,9 +1101,7 @@ function renderNotationPanel() {
         statsDiv.style.borderBottom = '1px solid #444';
         statsDiv.style.fontSize = '13px';
         statsDiv.style.lineHeight = '1.5';
-
         const totalStr = padZero(currentPositionStats.totalReaches);
-
         let positionHeader = "";
         if (currentState.currentNode === rootNode) {
             positionHeader = `Start Position (${totalStr})`;
@@ -1362,12 +1110,10 @@ function renderNotationPanel() {
             const ply = path.length - 1;
             const moveNum = Math.floor((ply + 1) / 2);
             const isWhite = (ply % 2 !== 0);
-
             const movePrefix = isWhite ? `${moveNum}.` : `${moveNum}...`;
             const moveSan = currentState.currentNode.san || "Move";
             positionHeader = `${movePrefix} ${moveSan} (${totalStr})`;
         }
-
         let nextMovesText = "";
         if (currentPositionStats.nextMoves.length > 0) {
             const path = getPathToCurrent();
@@ -1375,18 +1121,15 @@ function renderNotationPanel() {
             const nextPly = currentPly + 1;
             const nextMoveNum = Math.ceil(nextPly / 2);
             const nextPrefix = (nextPly % 2 !== 0) ? `${nextMoveNum}.` : `${nextMoveNum}...`;
-
             const movesStrings = currentPositionStats.nextMoves.map(m => {
                 const moveLabel = m.san || `${m.from}-${m.to}`;
                 const parts = [];
                 if (m.possible > 0) parts.push(`${padZero(m.possible)}P`);
                 if (m.mainline > 0) parts.push(padZero(m.mainline));
                 const countStr = parts.length ? `(${parts.join(',')})` : '';
-
                 return `<span class="${m.possible > 0 ? 'possible-move' : 'mainline-move'}">${moveLabel}</span>
                         <span style="color:#ffeb3b">${countStr}</span>`;
             });
-
             nextMovesText = `
                 <div style="margin-top:5px;color:#a4a4a4;">
                     ${nextPrefix} ${movesStrings.join(' , ')}
@@ -1402,7 +1145,6 @@ function renderNotationPanel() {
                     No saved moves from this position
                 </div>`;
         }
-
         statsDiv.innerHTML = `
             <strong style="color:#2ecc71">${positionHeader}</strong>
             <div style="color:#a4a4a4;font-size:11px;margin-top:2px;">
@@ -1410,7 +1152,6 @@ function renderNotationPanel() {
             </div>
             ${nextMovesText}
         `;
-
         statsContainer.appendChild(statsDiv);
     } else {
         const statsDiv = document.createElement('div');
@@ -1418,7 +1159,6 @@ function renderNotationPanel() {
         statsDiv.style.padding = '8px 6px';
         statsDiv.style.borderBottom = '1px solid #444';
         statsDiv.style.fontSize = '13px';
-
         statsDiv.innerHTML = `
             <strong>Unsaved Position</strong>
             <div style="color:#a4a4a4;font-size:11px;margin-top:2px;">
@@ -1430,55 +1170,40 @@ function renderNotationPanel() {
         `;
         statsContainer.appendChild(statsDiv);
     }
-
-    // ============================================================
-    // 2. SCROLLABLE NOTATION LIST (Moves Only)
-    // ============================================================
     const activePath = getPathToCurrent();
     let futurePath = [];
     let temp = currentState.currentNode;
-
     while (temp.children.length > 0) {
         temp = temp.children[0];
         futurePath.push(temp);
     }
-
     const displayPath = [...activePath, ...futurePath];
-
     let moveCounter = 1;
     let isWhiteTurn = true;
-
     displayPath.forEach((node, index) => {
         if (!node.moveData) return;
-
         const div = document.createElement('div');
         div.className = 'notation-line';
-
         if (isWhiteTurn || index === 0) {
             const numSpan = document.createElement('span');
             numSpan.className = 'notation-turn';
             numSpan.innerText = isWhiteTurn ? `${moveCounter}.` : `${moveCounter}...`;
             div.appendChild(numSpan);
         }
-
         const moveSpan = document.createElement('span');
         moveSpan.className = 'notation-move';
         moveSpan.innerHTML = node.san;
-
         if (node.count.total > 0) {
             const countSpan = document.createElement('span');
             countSpan.style.marginLeft = '3px';
             countSpan.style.fontSize = '0.9em';
             countSpan.style.color = node.customColor === 'yellow' ? '#f1c40f' : '#2ecc71';
-
             const parts = [];
             if (node.count.possible > 0) parts.push(`${node.count.possible}P`);
             if (node.count.mainline > 0) parts.push(`${node.count.mainline}`);
-
             countSpan.innerText = `×${parts.length ? parts.join(',') : node.count.total}`;
             moveSpan.appendChild(countSpan);
         }
-
         if (node === currentState.currentNode) {
             moveSpan.classList.add('notation-active');
             setTimeout(() => moveSpan.scrollIntoView({ block: 'nearest' }), 10);
@@ -1487,37 +1212,30 @@ function renderNotationPanel() {
         } else {
             moveSpan.style.color = '#888';
         }
-
         moveSpan.addEventListener('click', () => {
             currentState.currentNode = node;
             renderBoardVisuals();
             renderNotationPanel();
         });
-
         div.appendChild(moveSpan);
         moveContainer.appendChild(div);
-
         if (!isWhiteTurn) moveCounter++;
         isWhiteTurn = !isWhiteTurn;
     });
 }
-
-
 // ==========================================
 // 9. DRAWING HELPERS
 // ==========================================
-
 function drawArrowWithLabel(node, arrowColor, ringColor, labelText) {
     const arrowLayer = document.getElementById('arrows-layer');
     const linkLayer = document.getElementById('links-layer');
     const ringLayer = document.getElementById('rings-layer');
     const textLayer = document.getElementById('text-layer');
-
     const start = getSquareCenter(node.moveData.from);
     const end = getSquareCenter(node.moveData.to);
     const cssClass = `custom-arrow arrow-${arrowColor}`;
     const markerId = `url(#arrowhead-${arrowColor})`;
-    
+   
     const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
     line.setAttribute("x1", start.x + "%");
     line.setAttribute("y1", start.y + "%");
@@ -1526,15 +1244,14 @@ function drawArrowWithLabel(node, arrowColor, ringColor, labelText) {
     line.setAttribute("class", cssClass);
     line.setAttribute("marker-end", markerId);
     arrowLayer.appendChild(line);
-    
+   
     if (arrowColor === 'ghost') return;
-
     const midX = (start.x + end.x) / 2;
     const midY = (start.y + end.y) / 2;
     const dx = end.x - start.x;
     const dy = end.y - start.y;
     const len = Math.sqrt(dx*dx + dy*dy);
-    const offset = 4; 
+    const offset = 4;
     let px = -dy / len * offset;
     let py = dx / len * offset;
     const labelX = midX + px;
@@ -1546,33 +1263,26 @@ function drawArrowWithLabel(node, arrowColor, ringColor, labelText) {
     link.setAttribute("y2", labelY + "%");
     link.setAttribute("class", `link-line arrow-${arrowColor}`);
     linkLayer.appendChild(link);
-
-    // Determine ring color based on analysis quality
-let ringQualityColor = '';
-if (node.analysis?.quality === 'best') ringQualityColor = 'blue';
-else if (node.analysis?.quality === 'good') ringQualityColor = 'darkgreen';  
-else if (node.analysis?.quality === 'bad') ringQualityColor = 'red';
-
-const finalRingColor = ringQualityColor || ringColor;  // Fallback to manual color if unknown
-
-const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-circle.setAttribute("cx", labelX + "%");
-circle.setAttribute("cy", labelY + "%");
-circle.setAttribute("r", "3.5%");
-circle.setAttribute("class", `move-ring ring-${finalRingColor}`);
-
-    circle.addEventListener('click', (e) => { 
-        e.stopPropagation(); 
+    let ringQualityColor = '';
+    if (node.analysis?.quality === 'best') ringQualityColor = 'darkblue';
+    else if (node.analysis?.quality === 'good') ringQualityColor = 'darkgreen';
+    else if (node.analysis?.quality === 'bad') ringQualityColor = 'darkred';
+    const finalRingColor = ringQualityColor || ringColor;
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", labelX + "%");
+    circle.setAttribute("cy", labelY + "%");
+    circle.setAttribute("r", "3.5%");
+    circle.setAttribute("class", `move-ring ring-${finalRingColor}`);
+    circle.addEventListener('click', (e) => {
+        e.stopPropagation();
         const modifiers = { alt: e.altKey, shift: e.shiftKey };
-        handleRingClick(node, 'single', modifiers); 
+        handleRingClick(node, 'single', modifiers);
     });
-    circle.addEventListener('dblclick', (e) => { 
-        e.stopPropagation(); 
-        handleRingClick(node, 'double', {}); 
+    circle.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        handleRingClick(node, 'double', {});
     });
     ringLayer.appendChild(circle);
-
-    // Create a transparent rectangle behind the text to prevent clicks
     const textBg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     textBg.setAttribute("x", (labelX - 3) + "%");
     textBg.setAttribute("y", (labelY - 1.5) + "%");
@@ -1581,18 +1291,16 @@ circle.setAttribute("class", `move-ring ring-${finalRingColor}`);
     textBg.setAttribute("fill", "transparent");
     textBg.setAttribute("pointer-events", "none");
     textLayer.appendChild(textBg);
-
     const textEl = document.createElementNS("http://www.w3.org/2000/svg", "text");
     textEl.setAttribute("x", labelX + "%");
     textEl.setAttribute("y", labelY + "%");
-   const baseClass = "arrow-number";
-    const qualityClass = node.analysis?.quality ? node.analysis.quality : '';
+    const baseClass = "arrow-number";
+    const qualityClass = node.analysis?.quality || '';
     textEl.setAttribute("class", `${baseClass} ${qualityClass}`);
     textEl.setAttribute("pointer-events", "none");
     textEl.textContent = labelText;
     textLayer.appendChild(textEl);
 }
-
 function drawHeadText(square, text) {
     const container = document.getElementById('text-layer');
     const center = getSquareCenter(square);
@@ -1600,13 +1308,12 @@ function drawHeadText(square, text) {
     textEl.setAttribute("x", center.x + "%");
     textEl.setAttribute("y", center.y + "%");
     textEl.setAttribute("class", "head-count");
-    textEl.setAttribute("font-size", "18px"); 
-    textEl.setAttribute("dy", "1px"); 
+    textEl.setAttribute("font-size", "18px");
+    textEl.setAttribute("dy", "1px");
     textEl.setAttribute("pointer-events", "none");
     textEl.textContent = text;
     container.appendChild(textEl);
 }
-
 // ==========================================
 // 10. INPUT (FIXED for click issues)
 // ==========================================
@@ -1614,35 +1321,33 @@ function setupMouseInteractions(overlay) {
     let startSquare = null;
     let isDrawing = false;
     let mouseDownTime = 0;
-    
+   
     overlay.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
         mouseDownTime = Date.now();
-        
-        // Check if clicking on interactive elements
-        if (e.target.tagName === 'circle' || 
-            e.target.tagName === 'INPUT' || 
+       
+        if (e.target.tagName === 'circle' ||
+            e.target.tagName === 'INPUT' ||
             e.target.tagName === 'BUTTON' ||
             e.target.tagName === 'text') {
             return;
         }
-        
+       
         const svg = document.getElementById('arrow-canvas');
         if(svg) {
-            const rect = svg.getBoundingClientRect(); 
+            const rect = svg.getBoundingClientRect();
             startSquare = getSquareFromEvent(e, rect);
             isDrawing = true;
         }
     });
-    
+   
     overlay.addEventListener('mousemove', (e) => {
         if (!isDrawing || !startSquare) return;
     });
-    
+   
     overlay.addEventListener('mouseup', (e) => {
         if (!isDrawing || !startSquare) return;
-        
-        // Check if this was a quick click (not a drag)
+       
         const clickDuration = Date.now() - mouseDownTime;
         if (clickDuration > 200) {
             const svg = document.getElementById('arrow-canvas');
@@ -1650,35 +1355,20 @@ function setupMouseInteractions(overlay) {
                 const rect = svg.getBoundingClientRect();
                 const endSquare = getSquareFromEvent(e, rect);
                 if (endSquare && startSquare !== endSquare) {
-                    const modifiers = { 
-                        alt: e.altKey, 
-                        shift: e.shiftKey 
+                    const modifiers = {
+                        alt: e.altKey,
+                        shift: e.shiftKey
                     };
                     addMove(startSquare, endSquare, modifiers);
                 }
             }
         }
-        
+       
         startSquare = null;
         isDrawing = false;
         mouseDownTime = 0;
     });
-    
-    // Add a simple click handler for navigation (not drawing)
-    overlay.addEventListener('click', (e) => {
-        // Only handle clicks on the board background, not on interactive elements
-        if (e.target.id === 'board-dimmer' || 
-            e.target.tagName === 'rect' || 
-            e.target.tagName === 'svg') {
-            
-            // Check if this was a quick click
-            if (Date.now() - mouseDownTime < 200) {
-                console.log("Board background clicked");
-            }
-        }
-    });
-    
-    // Add touch support
+   
     overlay.addEventListener('touchstart', (e) => {
         if (e.target.tagName === 'circle' || e.target.tagName === 'text') return;
         const touch = e.touches[0];
@@ -1692,7 +1382,7 @@ function setupMouseInteractions(overlay) {
             isDrawing = true;
         }
     });
-    
+   
     overlay.addEventListener('touchend', (e) => {
         if (!isDrawing || !startSquare) return;
         const touch = e.changedTouches[0];
@@ -1711,7 +1401,6 @@ function setupMouseInteractions(overlay) {
         isDrawing = false;
     });
 }
-
 function getSquareFromEvent(event, rect) {
     const isBlack = document.querySelector('.cg-wrap')?.classList.contains('orientation-black');
     const x = (event.clientX - rect.left) / rect.width;
@@ -1722,7 +1411,6 @@ function getSquareFromEvent(event, rect) {
     const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
     return files[file] + (rank + 1);
 }
-
 function getSquareCenter(square) {
     if(!square) return {x:0, y:0};
     const isBlack = document.querySelector('.cg-wrap')?.classList.contains('orientation-black');
@@ -1732,24 +1420,17 @@ function getSquareCenter(square) {
     if (isBlack) { fileIndex = 7 - fileIndex; rankIndex = 7 - rankIndex; }
     return { x: (fileIndex * 12.5) + 6.25, y: ((7 - rankIndex) * 12.5) + 6.25 };
 }
-
 // ==========================================
 // INITIALIZATION
 // ==========================================
-
 async function init() {
-    // Load any previously saved counts
     await loadRepeatCounts();
     assignRepeatCountsToTree();
-    
-    // Load current position stats
     await updateCurrentPositionStats();
-    
+   
     console.log("Arrow Navigator initialized - use 'Save Position' to record move statistics");
     console.log("Yellow arrows = Possible moves | Green arrows = Mainline moves");
 }
-
-// Call init when ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
 } else {
