@@ -4,10 +4,10 @@ import { sendOTPEmail } from "../utils/mailer.js";
 import crypto from "crypto";
 
 const router = express.Router();
-const otpStore = new Map(); // In production: use Redis with TTL (expires after 10 min)
+const otpStore = new Map(); 
 
-// Rate limiting helper (simple in-memory, replace with express-rate-limit for production)
-const otpAttempts = new Map(); // email → count
+
+const otpAttempts = new Map(); 
 
 router.post("/send-otp", async (req, res) => {
   try {
@@ -19,10 +19,10 @@ router.post("/send-otp", async (req, res) => {
     }
     const cleanEmail = email.toLowerCase().trim();
 
-    // Rate limiting: max 3 OTPs per email per hour
+    // max 3 OTPs per email per hour
     const now = Date.now();
     const attempts = otpAttempts.get(cleanEmail) || [];
-    const recent = attempts.filter(time => now - time < 60 * 60 * 1000); // 1 hour
+    const recent = attempts.filter(time => now - time < 60 * 60 * 1000); 
     if (recent.length >= 3) {
       return res.status(429).json({ error: "Too many OTP requests. Try again in an hour." });
     }
