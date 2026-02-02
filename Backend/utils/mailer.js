@@ -3,10 +3,10 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-// Validate required env variables at startup
+
 if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
   console.error("ERROR: SMTP_USER and SMTP_PASS must be set in .env file");
-  process.exit(1); // or throw error depending on your preference
+  process.exit(1);
 }
 
 const transporter = nodemailer.createTransport({
@@ -17,7 +17,7 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// Optional: verify transporter connection on startup (good for debugging)
+// verify transporter connection on startup 
 transporter.verify((error, success) => {
   if (error) {
     console.error("SMTP transporter verification failed:", error);
