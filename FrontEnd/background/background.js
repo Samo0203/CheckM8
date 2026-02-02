@@ -14,19 +14,19 @@ createOffscreen();
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
-  // Forward Stockfish analysis requests (now passes the candidate move)
+  // Forward Stockfish analysis requests
   if (message.type === "ANALYZE_MOVE") {
     chrome.runtime.sendMessage({
       type: "ANALYZE_FEN",
       fen: message.fen,
-      move: message.move   // ← FIXED: pass the candidate move
+      move: message.move   
     }, response => {
       sendResponse(response);
     });
     return true;
   }
 
-  // Direct forward for ANALYZE_FEN (unchanged)
+  // Direct forward for ANALYZE_FEN 
   if (message.type === "ANALYZE_FEN") {
     chrome.runtime.sendMessage(message, response => {
       sendResponse(response);
@@ -34,7 +34,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // Backend proxy (unchanged)
+  // Backend proxy
   if (message.type === "PROXY_API_CALL") {
     const { endpoint, method = 'POST', body } = message;
     fetch(`http://localhost:5000/api/${endpoint}`, {
