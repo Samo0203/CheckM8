@@ -13,7 +13,6 @@ engine.postMessage("uci");
 
 engine.onmessage = (e) => {
   const line = e.data;
-  // console.log("♟️ SF:", line);
 
   if (line === "uciok") {
     engineReady = true;
@@ -23,7 +22,7 @@ engine.onmessage = (e) => {
 
   if (!currentAnalysis) return;
 
-  // Capture best move (MultiPV 1)
+  // Capture best move
   if (line.startsWith('info depth 13')) { 
   const multipvMatch = line.match(/multipv (\d+)/);
   const scoreMatch = line.match(/score cp (-?\d+)/);
@@ -91,6 +90,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     engine.postMessage("setoption name MultiPV value 7");
     engine.postMessage("go depth 13");
 
-    return true; // async response
+    return true;
   }
 });
