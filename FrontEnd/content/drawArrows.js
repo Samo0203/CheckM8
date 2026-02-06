@@ -1,4 +1,4 @@
-console.log("Lichess Arrow Navigator: Phase 55 (Position Repeats - Next Moves Stats)");
+console.log("Lichess Arrow Navigator");
 // ==========================================
 // 0. AUTH & API HELPERS
 // ==========================================
@@ -213,11 +213,6 @@ function scanFullBoard() {
             else if (rawClass.includes('bishop') || rawClass.includes('role-b') || bgUrl.includes('wb.') || bgUrl.includes('bb.') || bgUrl.includes('/b.') || bgUrl.includes('_b.')) type = 'B';
             else if (rawClass.includes('knight') || rawClass.includes('role-n') || bgUrl.includes('wn.') || bgUrl.includes('bn.') || bgUrl.includes('/n.') || bgUrl.includes('_n.')) type = 'N';
            
-            if (type === 'P') {
-                if (square === 'a8' || square === 'h8') { type = 'R'; color = 'b'; }
-                else if (square === 'a1' || square === 'h1') { type = 'R'; color = 'w'; }
-            }
-            if (square === 'd1') { type = 'Q'; color = 'w'; }
             state[square] = color + type;
         }
     });
@@ -477,6 +472,143 @@ async function savePosition() {
     isSaving = false;
 }
 // ==========================================
+// NEW FEATURE: Legal move dots (fixed for ALL pieces)
+// ==========================================
+function getCurrentBoardMap() {
+    const state = scanFullBoard();
+    const map = {};
+    Object.entries(state).forEach(([sq, code]) => {
+        if (code) {
+            const color = code[0] === 'w';
+            const type = code[1].toUpperCase();
+            map[sq] = color ? type : type.toLowerCase();
+        }
+    });
+    return map;
+}
+function getPseudoLegalMoves(fromSquare, boardMap) {
+    const piece = boardMap[fromSquare];
+    if (!piece) return [];
+    const isWhite = piece === piece.toUpperCase();
+    const type = piece.toUpperCase();
+    const fileIdx = 'abcdefgh'.indexOf(fromSquare[0]);
+    const rank = parseInt(fromSquare[1]);
+    const moves = [];
+
+    const tryAdd = (to) => {
+        if (!to) return;
+        const target = boardMap[to];
+        if (target) {
+            const targetWhite = target === target.toUpperCase();
+            if (isWhite === targetWhite) return; // own piece
+            moves.push(to);
+            return true; // blocked after capture
+        }
+        moves.push(to);
+        return false;
+    };
+
+    if (type === 'P') {
+        const dir = isWhite ? 1 : -1;
+        const startRank = isWhite ? 2 : 7;
+        const forward1 = rank + dir;
+        const f1 = 'abcdefgh'[fileIdx] + forward1;
+        if (!boardMap[f1]) {
+            tryAdd(f1);
+            if (rank === startRank) {
+                const forward2 = rank + 2 * dir;
+                const f2 = 'abcdefgh'[fileIdx] + forward2;
+                if (!boardMap[f2]) tryAdd(f2);
+            }
+        }
+        [fileIdx - 1, fileIdx + 1].forEach(f => {
+            if (f >= 0 && f < 8) {
+                const cap = 'abcdefgh'[f] + (rank + dir);
+                if (boardMap[cap] && (isWhite !== (boardMap[cap] === boardMap[cap].toUpperCase()))) {
+                    tryAdd(cap);
+                }
+            }
+        });
+    } else if (type === 'N') {
+        const deltas = [[1,2],[2,1],[2,-1],[1,-2],[-1,-2],[-2,-1],[-2,1],[-1,2]];
+        deltas.forEach(([df, dr]) => {
+            const f = fileIdx + df;
+            const r = rank + dr;
+            if (f >= 0 && f < 8 && r >= 1 && r <= 8) tryAdd('abcdefgh'[f] + r);
+        });
+    } else if (type === 'K') {
+        const deltas = [[0,1],[1,1],[1,0],[1,-1],[0,-1],[-1,-1],[-1,0],[-1,1]];
+        deltas.forEach(([df, dr]) => {
+            const f = fileIdx + df;
+            const r = rank + dr;
+            if (f >= 0 && f < 8 && r >= 1 && r <= 8) tryAdd('abcdefgh'[f] + r);
+        });
+        // Basic castling
+        const rookRank = rank;
+        if (rookRank === (isWhite ? 1 : 8)) {
+            // Kingside
+            if (boardMap[`h${rookRank}`] === (isWhite ? 'R' : 'r') &&
+                !boardMap[`f${rookRank}`] && !boardMap[`g${rookRank}`]) {
+                tryAdd('g' + rookRank);
+            }
+            // Queenside
+            if (boardMap[`a${rookRank}`] === (isWhite ? 'R' : 'r') &&
+                !boardMap[`b${rookRank}`] && !boardMap[`c${rookRank}`] && !boardMap[`d${rookRank}`]) {
+                tryAdd('c' + rookRank);
+            }
+        }
+    } else {
+        const dirs = [];
+        if (type === 'R' || type === 'Q') dirs.push([0,1],[0,-1],[1,0],[-1,0]);
+        if (type === 'B' || type === 'Q') dirs.push([1,1],[1,-1],[-1,1],[-1,-1]);
+
+        dirs.forEach(([df, dr]) => {
+            let f = fileIdx + df;
+            let r = rank + dr;
+            while (f >= 0 && f < 8 && r >= 1 && r <= 8) {
+                const to = 'abcdefgh'[f] + r;
+                if (tryAdd(to)) break;
+                f += df;
+                r += dr;
+            }
+        });
+    }
+
+    return moves;
+}
+function clearLegalDots() {
+    const layer = document.getElementById('legal-dots-layer');
+    if (layer) layer.innerHTML = '';
+}
+function showLegalDots(square) {
+    clearLegalDots();
+    if (!square) return;
+    const boardMap = getCurrentBoardMap();
+    if (!boardMap[square]) return;
+    const dests = getPseudoLegalMoves(square, boardMap);
+    if (dests.length === 0) return;
+
+    let layer = document.getElementById('legal-dots-layer');
+    if (!layer) {
+        layer = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        layer.id = "legal-dots-layer";
+        svgCanvas.appendChild(layer);
+    }
+
+    dests.forEach(to => {
+        const center = getSquareCenter(to);
+        const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        dot.setAttribute("cx", center.x + "%");
+        dot.setAttribute("cy", center.y + "%");
+        dot.setAttribute("r", "5");
+        dot.setAttribute("fill", "#ffffff");
+        dot.setAttribute("fill-opacity", "0.8");
+        dot.setAttribute("filter", "url(#white-glow)");
+        dot.setAttribute("pointer-events", "none");
+        layer.appendChild(dot);
+    });
+}
+// ==========================================
 // 4. UI SETUP
 // ==========================================
 let overlayElement = null;
@@ -616,6 +748,15 @@ function createFloatingOverlay() {
                 <marker id="arrowhead-ghost" markerWidth="4" markerHeight="4" refX="3" refY="2" orient="auto">
                     <path d="M0,0 L4,2 L0,4 Z" fill="#bdc3c7" />
                 </marker>
+                <filter id="white-glow" x="-100%" y="-100%" width="300%" height="300%">
+                    <feGaussianBlur stdDeviation="4" result="blur"/>
+                    <feFlood flood-color="#ffffff" flood-opacity="0.6"/>
+                    <feComposite in="blur" in2="SourceAlpha" operator="in"/>
+                    <feMerge>
+                        <feMergeNode/>
+                        <feMergeNode in="SourceGraphic"/>
+                    </feMerge>
+                </filter>
             </defs>
             <rect id="board-dimmer" class="board-blur" width="100%" height="100%" style="display:none;"></rect>
             <g id="grid-layer" style="display:none;"></g>
@@ -624,12 +765,20 @@ function createFloatingOverlay() {
             <g id="links-layer"></g>
             <g id="rings-layer"></g>
             <g id="text-layer"></g>
+            <g id="legal-dots-layer"></g>
         </svg>
     `;
     overlayElement.appendChild(controls);
     overlayElement.appendChild(svgContainer);
     document.body.appendChild(overlayElement);
     svgCanvas = document.getElementById('arrow-canvas');
+
+    const boardEl = document.querySelector('cg-board');
+    if (boardEl) {
+        const observer = new MutationObserver(clearLegalDots);
+        observer.observe(boardEl, { childList: true, subtree: true, attributes: true });
+    }
+
     setupMouseInteractions(overlayElement);
     renderBoardVisuals();
     renderNotationPanel();
@@ -911,6 +1060,7 @@ function renderBoardVisuals() {
         const el = document.getElementById(id);
         if (el) el.innerHTML = '';
     });
+    clearLegalDots();
     const dimmer = document.getElementById('board-dimmer');
     const ghostLayer = document.getElementById('ghost-layer');
     const gridLayer = document.getElementById('grid-layer');
@@ -1315,7 +1465,7 @@ function drawHeadText(square, text) {
     container.appendChild(textEl);
 }
 // ==========================================
-// 10. INPUT (FIXED for click issues)
+// 10. INPUT
 // ==========================================
 function setupMouseInteractions(overlay) {
     let startSquare = null;
@@ -1346,22 +1496,32 @@ function setupMouseInteractions(overlay) {
     });
    
     overlay.addEventListener('mouseup', (e) => {
-        if (!isDrawing || !startSquare) return;
+        if (!isDrawing) return;
        
         const clickDuration = Date.now() - mouseDownTime;
-        if (clickDuration > 200) {
-            const svg = document.getElementById('arrow-canvas');
-            if(svg) {
-                const rect = svg.getBoundingClientRect();
-                const endSquare = getSquareFromEvent(e, rect);
-                if (endSquare && startSquare !== endSquare) {
-                    const modifiers = {
-                        alt: e.altKey,
-                        shift: e.shiftKey
-                    };
-                    addMove(startSquare, endSquare, modifiers);
-                }
+        const svg = document.getElementById('arrow-canvas');
+        if (!svg) {
+            isDrawing = false;
+            return;
+        }
+        const rect = svg.getBoundingClientRect();
+        const endSquare = getSquareFromEvent(e, rect);
+
+        if (clickDuration > 200 && startSquare && endSquare && startSquare !== endSquare) {
+            const modifiers = {
+                alt: e.altKey,
+                shift: e.shiftKey
+            };
+            addMove(startSquare, endSquare, modifiers);
+        } else if (endSquare) {
+            const boardMap = getCurrentBoardMap();
+            if (boardMap[endSquare]) {
+                showLegalDots(endSquare);
+            } else {
+                clearLegalDots();
             }
+        } else {
+            clearLegalDots();
         }
        
         startSquare = null;
@@ -1395,6 +1555,13 @@ function setupMouseInteractions(overlay) {
             }, rect);
             if (endSquare && startSquare !== endSquare) {
                 addMove(startSquare, endSquare, { alt: false, shift: false });
+            } else if (endSquare) {
+                const boardMap = getCurrentBoardMap();
+                if (boardMap[endSquare]) {
+                    showLegalDots(endSquare);
+                } else {
+                    clearLegalDots();
+                }
             }
         }
         startSquare = null;

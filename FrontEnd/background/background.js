@@ -19,14 +19,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.runtime.sendMessage({
       type: "ANALYZE_FEN",
       fen: message.fen,
-      move: message.move   
+      move: message.move
     }, response => {
       sendResponse(response);
     });
     return true;
   }
 
-  // Direct forward for ANALYZE_FEN 
+  // Direct forward for ANALYZE_FEN
   if (message.type === "ANALYZE_FEN") {
     chrome.runtime.sendMessage(message, response => {
       sendResponse(response);
