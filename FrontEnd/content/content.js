@@ -6,7 +6,7 @@ const observer = new MutationObserver(() => {
   if (board && !document.querySelector("svg.checkm8-arrows")) {
     chrome.storage.sync.get(["loggedInUser"], (res) => {
       if (res.loggedInUser) {
-        // Arrow enhancer initialized via drawArrows.js
+        // Arrow enhancer initialized
         console.log("Initializing arrow enhancer for user:", res.loggedInUser);
       }
     });

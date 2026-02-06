@@ -1,13 +1,13 @@
 const backendUrl = "http://localhost:5000/api";
 
 document.addEventListener("DOMContentLoaded", () => {
-  chrome.storage.sync.get(["loggedInUser"], (res) => {  // ← Fixed here
+  chrome.storage.sync.get(["loggedInUser"], (res) => {
     if (res.loggedInUser) {
       
       document.getElementById("loginForm").style.display = "none";
       document.getElementById("loggedInView").style.display = "block";
       document.getElementById("usernameDisplay").textContent = `Logged in as ${res.loggedInUser}`;
-      document.getElementById("message").textContent = ""; // Clear any old message
+      document.getElementById("message").textContent = "";
     } else {
       
       document.getElementById("loginForm").style.display = "block";

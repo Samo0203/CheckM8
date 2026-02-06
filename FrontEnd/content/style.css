@@ -48,7 +48,7 @@
     font-family: 'Noto Sans', sans-serif; font-size: 13px; color: #bbb; min-height: 100px;
 
     overflow-y: auto;
-    max-height: 300px;   /* adjust to your UI */
+    max-height: 300px;
     padding-top: 6px;
 }
 
@@ -66,20 +66,22 @@
 #arrow-canvas { width: 100%; height: 100%; display: block; }
 
 #board-dimmer {
-    fill: rgba(0,0,0,0.85); /* Dark background for Hint Mode */
+    fill: rgba(0,0,0,0.85);
 }
 
-/* Ghost Pieces - Use Unicode Chess Symbols */
+/* Ghost Pieces */
 .ghost-piece {
     font-family: "Segoe UI Symbol", "Arial Unicode MS", sans-serif; 
     font-size: 50px; 
     text-anchor: middle;
-    dominant-baseline: central; /* Better vertical centering */
+    dominant-baseline: central; 
     pointer-events: none;
     font-weight: normal;
 }
-.piece-w { fill: #e0c0a0; stroke: #000; stroke-width: 1px; } /* White Pieces */
-.piece-b { fill: #404040; stroke: #fff; stroke-width: 1px; } /* Black Pieces */
+/* White Pieces */
+.piece-w { fill: #e0c0a0; stroke: #000; stroke-width: 1px; }
+/* Black Pieces */
+.piece-b { fill: #404040; stroke: #fff; stroke-width: 1px; }
 
 /* Arrows */
 .custom-arrow { stroke-width: 1.8%; stroke-opacity: 0.9; fill: none; stroke-linecap: round; }
@@ -97,18 +99,19 @@
     height: 100%;
 }
 
+/* Arrow Analysis */
 .arrow-number.best {
-  fill: #3498db; /* Blue */
+  fill: #3498db;
 }
 
 .arrow-number.good {
-  fill: #2ecc71; /* Green */
+  fill: #2ecc71;
 }
 
 .arrow-number.bad {
-  fill: #e74c3c; /* Red */
+  fill: #e74c3c;
 }
 
-.ring-darkblue { stroke: #1f3a93; }   /* Dark Blue for best */
-.ring-darkgreen { stroke: #217845; }  /* Dark Green for good */
-.ring-darkred { stroke: #8b0000; }    /* Dark Red for bad */
+.ring-darkblue { stroke: #1f3a93; }
+.ring-darkgreen { stroke: #217845; }
+.ring-darkred { stroke: #8b0000; }
