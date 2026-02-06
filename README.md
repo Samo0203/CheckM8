@@ -1,8 +1,8 @@
 # ♟️ CheckM8: Interactive Chess Learning & Analysis System
 
-**CheckM8** is an extension designed primarily for **beginner-level chess players** to enhance learning on Lichess.org. It extends the native arrow tool with persistent, colored, numbered, and engine-analyzed arrows, move repetition tracking, and intuitive legal-move visualization to help newcomers understand piece movement and basic strategy.
+**CheckM8** is an extension designed primarily for **beginner level chess players** to enhance learning on Lichess.org. It extends the native arrow tool with persistent, colored, numbered, and engine analyzed arrows, move repetition tracking, and intuitive legal move visualization to help newcomers understand piece movement and basic strategy.
 
-While advanced players may find some features useful for opening exploration or variation review, the core focus is on supporting early-stage learners by making chess concepts more visual and interactive.
+While advanced players may find some features useful for opening exploration or variation review, the core focus is on supporting early stage learners by making chess concepts more visual and interactive.
 
 ## 🚀 Key Features
 
@@ -28,7 +28,7 @@ While advanced players may find some features useful for opening exploration or 
   - Arrows colored by quality: Blue (best), Green (good), Red (bad)
 
 ### 📊 Move Statistics & Learning Insights
-- Track how often you've played or considered moves in each position
+- Track how often the user has played or considered moves in each position
 - Distinction between mainline (green) and possible (yellow) moves
 - Visual counts on arrow heads and notation panel
 - "Save Position" records current variation tree frequencies
@@ -40,12 +40,12 @@ While advanced players may find some features useful for opening exploration or 
 
 ### 💾 Save & Load
 - Save/load entire arrow tree + position to local JSON file
-- Persistent per-game/analysis board
+- Persistent per game/ board
 
 ### 📝 Notation Panel
 - Live move list with SAN notation
 - Click moves to navigate
-- Position reach counts and next-move suggestions with frequencies
+- Position reach counts and next move suggestions with frequencies
 
 ## 🛠️ Installation
 
