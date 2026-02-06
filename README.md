@@ -1,4 +1,4 @@
-# ♟️ CheckM8: Interactive Chess Learning and Analysis System
+# ♟️ CheckM8: Interactive Chess Learning & Analysis System
 
 **CheckM8** is an extension designed primarily for **beginner-level chess players** to enhance learning on Lichess.org. It extends the native arrow tool with persistent, colored, numbered, and engine-analyzed arrows, move repetition tracking, and intuitive legal-move visualization to help newcomers understand piece movement and basic strategy.
 
