@@ -24,7 +24,7 @@ engine.onmessage = (e) => {
   if (!currentAnalysis) return;
 
   // Capture best move (MultiPV 1)
-  if (line.startsWith('info depth 13')) {  // or your depth
+  if (line.startsWith('info depth 13')) { 
   const multipvMatch = line.match(/multipv (\d+)/);
   const scoreMatch = line.match(/score cp (-?\d+)/);
   const pvMatch = line.match(/pv (\w{4})/);
