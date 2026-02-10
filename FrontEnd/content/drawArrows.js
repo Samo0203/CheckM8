@@ -1,6 +1,6 @@
 console.log("Lichess Arrow Navigator");
 // ==========================================
-// 0. AUTH & API HELPERS
+// AUTH & API HELPERS
 // ==========================================
 function getLoggedInUser() {
     return new Promise(resolve => {
@@ -87,9 +87,7 @@ function getMoveRepeatCount(fen, from, to) {
 function padZero(num) {
     return num < 10 ? `0${num}` : `${num}`;
 }
-// ==========================================
-// 1. DATA STRUCTURE (STATE BASED)
-// ==========================================
+
 class MoveNode {
     constructor(id, parent, moveData, color = null) {
         this.id = id;
@@ -139,7 +137,7 @@ let positionMoveCounts = new Map();
 let currentPositionStats = null;
 let isSaving = false;
 // ==========================================
-// 2. STATE ENGINE HELPERS
+// STATE ENGINE HELPERS
 // ==========================================
 function getPieceTypeFromCode(code) {
     if (!code) return "";
@@ -321,7 +319,7 @@ async function analyzeMoveWithStockfish(node) {
     }
 }
 // ==========================================
-// 3. POSITION REPEAT STATISTICS
+// POSITION REPEAT STATISTICS
 // ==========================================
 async function loadPositionStats(fen) {
     const user = await getLoggedInUser();
@@ -472,7 +470,7 @@ async function savePosition() {
     isSaving = false;
 }
 // ==========================================
-// NEW FEATURE: Legal move dots (fixed for ALL pieces)
+// Legal move dots
 // ==========================================
 function getCurrentBoardMap() {
     const state = scanFullBoard();
@@ -500,7 +498,7 @@ function getPseudoLegalMoves(fromSquare, boardMap) {
         const target = boardMap[to];
         if (target) {
             const targetWhite = target === target.toUpperCase();
-            if (isWhite === targetWhite) return; // own piece
+            if (isWhite === targetWhite) return; 
             moves.push(to);
             return true; // blocked after capture
         }
@@ -609,7 +607,7 @@ function showLegalDots(square) {
     });
 }
 // ==========================================
-// 4. UI SETUP
+// UI SETUP
 // ==========================================
 let overlayElement = null;
 let svgCanvas = null;
@@ -802,7 +800,7 @@ function updateOverlayPosition(board) {
     }
 }
 // ==========================================
-// 5. NAVIGATION LOGIC
+// NAVIGATION LOGIC
 // ==========================================
 async function addMove(startSquare, endSquare, modifiers = { alt: false, shift: false }) {
     const from = startSquare;
@@ -1236,7 +1234,7 @@ function getMoveLabel(index, isWhiteStart) {
     }
 }
 // ==========================================
-// 8. RENDER NOTATION PANEL
+// RENDER NOTATION PANEL
 // ==========================================
 function renderNotationPanel() {
     const statsContainer = document.getElementById('position-stats');
@@ -1374,7 +1372,7 @@ function renderNotationPanel() {
     });
 }
 // ==========================================
-// 9. DRAWING HELPERS
+// DRAWING HELPERS
 // ==========================================
 function drawArrowWithLabel(node, arrowColor, ringColor, labelText) {
     const arrowLayer = document.getElementById('arrows-layer');
@@ -1465,7 +1463,7 @@ function drawHeadText(square, text) {
     container.appendChild(textEl);
 }
 // ==========================================
-// 10. INPUT
+// INPUT
 // ==========================================
 function setupMouseInteractions(overlay) {
     let startSquare = null;
@@ -1602,4 +1600,5 @@ if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
 } else {
     init();
+
 }
